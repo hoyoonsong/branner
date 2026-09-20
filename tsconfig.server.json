@@ -14,5 +14,6 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["server"]
+  "include": ["server"],
+  "exclude": ["server/scripts"]
 }

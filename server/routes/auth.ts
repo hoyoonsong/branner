@@ -51,7 +51,10 @@ authRouter.get("/google", (req, res, next) => {
     return;
   }
   const nextPath = safeNext(req.query.next);
-  passport.authenticate("google", {
+  const google = passport as typeof passport & {
+    authenticate: (strategy: string, options: Record<string, unknown>) => ReturnType<typeof passport.authenticate>;
+  };
+  google.authenticate("google", {
     scope: ["email", "profile"],
     hd: "stanford.edu",
     prompt: "select_account",
@@ -61,7 +64,10 @@ authRouter.get("/google", (req, res, next) => {
 });
 
 authRouter.get("/google/callback", (req, res, next) => {
-  passport.authenticate("google", {
+  const google = passport as typeof passport & {
+    authenticate: (strategy: string, options: Record<string, unknown>) => ReturnType<typeof passport.authenticate>;
+  };
+  google.authenticate("google", {
     failureRedirect: "/login?error=stanford",
     callbackURL: googleCallbackUrl(req),
   })(req, res, next);

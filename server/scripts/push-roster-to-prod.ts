@@ -5,7 +5,7 @@ import { PrismaClient } from "@prisma/client";
 
 const SOURCE_DB = path.resolve("prisma/dev.db");
 const DEST = (process.env.PROD_URL || "https://branner.hoyoonsong.com").replace(/\/$/, "");
-const SECRET = process.env.IMPORT_SECRET;
+const SECRET = process.env.IMPORT_SECRET ?? "";
 const BATCH = 12;
 
 if (!SECRET) {
