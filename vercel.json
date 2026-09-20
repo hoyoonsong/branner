@@ -9,7 +9,7 @@
       "destination": "https://branner-production.up.railway.app/uploads/:path*"
     },
     {
-      "source": "/((?!api/|uploads/).*)",
+      "source": "/:path*",
       "destination": "/index.html"
     }
   ]
