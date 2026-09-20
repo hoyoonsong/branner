@@ -7,6 +7,10 @@
     {
       "source": "/uploads/:path*",
       "destination": "https://branner-production.up.railway.app/uploads/:path*"
+    },
+    {
+      "source": "/((?!api/|uploads/).*)",
+      "destination": "/index.html"
     }
   ]
 }
