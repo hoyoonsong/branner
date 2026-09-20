@@ -49,6 +49,8 @@ export function PublicAttendance() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [devEmail, setDevEmail] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const watchRef = useRef<number | null>(null);
 
   const load = async () => {
@@ -58,7 +60,17 @@ export function PublicAttendance() {
       googleEnabled: boolean;
       allowDevLogin: boolean;
     }>(`/api/public/events/${slug}`);
-    setEvent(data.event);
+    let nextEvent = data.event;
+    try {
+      const staff = await api<{ events: { id: string; slug: string; requireLogin: boolean }[] }>(
+        "/api/events",
+      );
+      const match = staff.events.find((e) => e.slug === nextEvent.slug || e.id === nextEvent.id);
+      if (match) nextEvent = { ...nextEvent, requireLogin: match.requireLogin };
+    } catch {
+      /* visitors are not staff — trust the public payload */
+    }
+    setEvent(nextEvent);
     setIdentity(data.identity);
     setAllowDevLogin(data.allowDevLogin);
     if (data.event.locationTracking) {
@@ -102,7 +114,21 @@ export function PublicAttendance() {
     );
   };
 
-  const identified = Boolean(identity?.resident);
+  useEffect(() => {
+    if (!slug) return;
+    try {
+      const raw = sessionStorage.getItem(`branner-name:${slug}`);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { firstName?: string; lastName?: string };
+      setFirstName(saved.firstName ?? "");
+      setLastName(saved.lastName ?? "");
+    } catch {
+      /* ignore */
+    }
+  }, [slug]);
+
+  const hasName = firstName.trim().length > 0 && lastName.trim().length > 0;
+  const identified = event?.requireLogin ? Boolean(identity?.resident) : hasName;
   const canSubmit = useMemo(() => {
     if (!event) return false;
     if (!identified) return false;
@@ -115,7 +141,16 @@ export function PublicAttendance() {
     setSubmitting(true);
     setError("");
     try {
-      await api(`/api/public/events/${event.slug}/submit`, {
+      if (!event.requireLogin) {
+        sessionStorage.setItem(
+          `branner-name:${event.slug}`,
+          JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim() }),
+        );
+      }
+      const result = await api<{
+        resident: { firstName: string; lastName: string; room: string } | null;
+        guestName: string | null;
+      }>(`/api/public/events/${event.slug}/submit`, {
         method: "POST",
         body: JSON.stringify({
           answers: responseData,
@@ -124,9 +159,14 @@ export function PublicAttendance() {
           lat: gps?.lat,
           lng: gps?.lng,
           accuracy: gps?.accuracy,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
         }),
       });
-      setDone("You're checked in.");
+      const who = result.resident
+        ? `${result.resident.firstName} ${result.resident.lastName} · Room ${result.resident.room}`
+        : result.guestName || `${firstName.trim()} ${lastName.trim()}`;
+      setDone(`You're checked in as ${who}.`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -149,7 +189,13 @@ export function PublicAttendance() {
     }
   };
 
-  const bar = statusBar({ event, identified, loc, distance });
+  const bar = statusBar({
+    event,
+    identified,
+    loc,
+    distance,
+    requireLogin: event?.requireLogin ?? true,
+  });
 
   if (!event) {
     return <div className="p-10 text-center text-stone-mute">{error || "Loading…"}</div>;
@@ -172,7 +218,7 @@ export function PublicAttendance() {
         <h1 className="mt-1 font-display text-3xl">{event.title}</h1>
         <p className="text-sm text-stone-mute">{event.eventType?.label ?? "House meeting"}</p>
 
-        {!identified && (
+        {event.requireLogin && !identity?.resident && (
           <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm">Sign in with Stanford so we know who you are. You cannot pick a name.</p>
             {googleEnabled ? (
@@ -206,16 +252,47 @@ export function PublicAttendance() {
           </div>
         )}
 
-        {identity && !identity.resident && (
+        {event.requireLogin && identity && !identity.resident && (
           <p className="mt-6 rounded-2xl bg-white p-5 text-sm text-cardinal shadow-sm">
             {identity.email} is not on the Branner roster.
           </p>
         )}
 
-        {identity?.resident && (
+        {event.requireLogin && identity?.resident && (
           <p className="mt-6 rounded-xl bg-white px-4 py-3 text-sm shadow-sm">
             Checking in as <strong>{identity.name}</strong> · Room {identity.resident.room}
           </p>
+        )}
+
+        {!event.requireLogin && (
+          <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium">Write your name</p>
+            <p className="mt-1 text-xs text-stone-mute">
+              No Stanford login for this event. Type your first and last name so staff can mark you present.
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                First name
+                <input
+                  className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  autoComplete="given-name"
+                  required
+                />
+              </label>
+              <label className="block text-sm">
+                Last name
+                <input
+                  className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  autoComplete="family-name"
+                  required
+                />
+              </label>
+            </div>
+          </div>
         )}
 
         {done ? (
@@ -272,17 +349,27 @@ function statusBar({
   identified,
   loc,
   distance,
+  requireLogin,
 }: {
   event: PublicEvent | null;
   identified: boolean;
   loc: LocState;
   distance: number | null;
+  requireLogin: boolean;
 }) {
   if (!identified) {
-    return { bg: "bg-red-700", text: "Sign in with Stanford — you cannot submit yet" };
+    return {
+      bg: "bg-red-700",
+      text: requireLogin
+        ? "Sign in with Stanford — you cannot submit yet"
+        : "Enter your name — you cannot submit yet",
+    };
   }
   if (!event?.locationTracking) {
-    return { bg: "bg-emerald-700", text: "You're signed in — you can submit" };
+    return {
+      bg: "bg-emerald-700",
+      text: requireLogin ? "You're signed in — you can submit" : "Name entered — you can submit",
+    };
   }
   if (loc === "inside") {
     return { bg: "bg-emerald-600", text: "You're in the right place — you can submit" };

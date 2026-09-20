@@ -49,7 +49,8 @@ type BuilderTab = "questions" | "responses";
 export type BuilderSubmission = {
   id: string;
   createdAt: string;
-  resident?: Pick<Resident, "id" | "firstName" | "lastName" | "room" | "hall">;
+  guestName?: string | null;
+  resident?: Pick<Resident, "id" | "firstName" | "lastName" | "room" | "hall"> | null;
 };
 
 function cleanFields(fields: FormField[]): FormField[] {
@@ -512,10 +513,10 @@ export function FormBuilderModal({
                 <div key={s.id} className="flex items-center justify-between px-5 py-3 text-sm">
                   <div>
                     <p className="font-medium text-slate-800">
-                      {s.resident ? fullName(s.resident) : "Unknown"}
+                      {s.resident ? fullName(s.resident) : s.guestName || "Guest"}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {s.resident ? `${s.resident.room} · ${s.resident.hall}` : s.id}
+                      {s.resident ? `${s.resident.room} · ${s.resident.hall}` : "Name written at check-in"}
                     </p>
                   </div>
                   <span className="text-xs text-slate-500">

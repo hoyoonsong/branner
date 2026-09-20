@@ -2,18 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
-import type { AttendanceEvent, FormSchema, Resident } from "../lib/types";
-import { formatWhen, fullName } from "../lib/utils";
+import { isRa, type AttendanceEvent, type FormSchema, type Resident } from "../lib/types";
+import { clsx, formatCheckIn, formatWhen, fullName, personSearchHay } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
 import { BRANNER_LAT, BRANNER_LNG } from "../lib/geo";
-import { Avatar } from "./Residents";
+import { Avatar, RaBadge } from "./Residents";
 
 type SubmissionRow = {
   id: string;
   createdAt: string;
   distanceM: number | null;
-  resident: Resident;
+  accuracy: number | null;
+  guestName: string | null;
+  responseData: Record<string, unknown>;
+  resident: Resident | null;
 };
 
 export function EventDetail() {
@@ -28,6 +31,8 @@ export function EventDetail() {
     byHall: Record<string, { present: number; expected: number }>;
   } | null>(null);
   const [builder, setBuilder] = useState(false);
+  const [peopleQ, setPeopleQ] = useState("");
+  const [list, setList] = useState<"all" | "present" | "absent">("all");
 
   const load = async () => {
     if (!id) return;
@@ -126,40 +131,15 @@ export function EventDetail() {
         ))}
       </div>
 
-      <section className="mt-8">
-        <h2 className="font-display text-xl">Present</h2>
-        <div className="mt-3 divide-y divide-black/5 rounded-2xl bg-white shadow-sm">
-          {submissions.map((s) => (
-            <Link key={s.id} to={`/residents/${s.resident.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-stone-sand">
-              <Avatar resident={s.resident} />
-              <div className="flex-1">
-                <p className="font-medium">{fullName(s.resident)}</p>
-                <p className="text-xs text-stone-mute">
-                  {s.resident.room} · {s.resident.hall}
-                </p>
-              </div>
-              {s.distanceM != null && (
-                <span className="text-xs text-stone-mute">{Math.round(s.distanceM)} m</span>
-              )}
-            </Link>
-          ))}
-          {submissions.length === 0 && <p className="p-4 text-sm text-stone-mute">No check-ins yet.</p>}
-        </div>
-      </section>
-
-      <section className="mt-8">
-        <h2 className="font-display text-xl">Not yet here</h2>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {absent.map((r) => (
-            <Link key={r.id} to={`/residents/${r.id}`} className="flex items-center gap-3 rounded-xl bg-white px-3 py-2 shadow-sm">
-              <Avatar resident={r} size={36} />
-              <span className="text-sm">
-                {fullName(r)} · {r.room}
-              </span>
-            </Link>
-          ))}
-        </div>
-      </section>
+      <PeopleLists
+        event={event}
+        submissions={submissions}
+        absent={absent}
+        query={peopleQ}
+        onQuery={setPeopleQ}
+        list={list}
+        onList={setList}
+      />
 
       {builder && (
         <FormBuilderModal
@@ -186,6 +166,235 @@ export function EventDetail() {
       )}
     </div>
   );
+}
+
+function PeopleLists({
+  event,
+  submissions,
+  absent,
+  query,
+  onQuery,
+  list,
+  onList,
+}: {
+  event: AttendanceEvent;
+  submissions: SubmissionRow[];
+  absent: Resident[];
+  query: string;
+  onQuery: (q: string) => void;
+  list: "all" | "present" | "absent";
+  onList: (v: "all" | "present" | "absent") => void;
+}) {
+  const q = personSearchHay([query]);
+  const present = useMemo(() => {
+    const rows = [...submissions].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    if (!q) return rows;
+    return rows.filter((s) =>
+      personSearchHay([
+        s.guestName,
+        s.resident?.firstName,
+        s.resident?.lastName,
+        s.resident?.legalName,
+        s.resident?.email,
+        s.resident?.room,
+        s.resident?.bedSlot,
+        s.resident?.hall,
+        s.resident?.phone,
+        s.resident?.type,
+        JSON.stringify(s.responseData ?? {}),
+      ]).includes(q),
+    );
+  }, [submissions, q]);
+  const missing = useMemo(() => {
+    const rows = [...absent].sort((a, b) => Number(isRa(b)) - Number(isRa(a)));
+    if (!q) return rows;
+    return rows.filter((r) =>
+      personSearchHay([
+        r.firstName,
+        r.lastName,
+        r.legalName,
+        r.email,
+        r.room,
+        r.bedSlot,
+        r.hall,
+        r.phone,
+        r.type,
+        r.hometown,
+      ]).includes(q),
+    );
+  }, [absent, q]);
+
+  return (
+    <div className="mt-8">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl">Who is here</h2>
+          <p className="text-sm text-stone-mute">
+            Search names, rooms, halls, emails, or form answers. Check-in times update live.
+          </p>
+        </div>
+        <input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder="Search present or not here…"
+          className="w-full max-w-sm rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {(
+          [
+            ["all", `All (${present.length + missing.length})`],
+            ["present", `Present (${present.length})`],
+            ["absent", `Not here (${missing.length})`],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onList(key)}
+            className={clsx(
+              "rounded-full px-3 py-1 text-sm font-medium",
+              list === key ? "bg-cardinal text-white" : "bg-white text-stone-mute shadow-sm",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {(list === "all" || list === "present") && (
+        <section className="mt-6">
+          <h3 className="font-display text-lg">Present</h3>
+          <div className="mt-3 divide-y divide-black/5 rounded-2xl bg-white shadow-sm">
+            {present.map((s) => (
+              <PresentRow key={s.id} submission={s} schema={event.formSchema} />
+            ))}
+            {present.length === 0 && (
+              <p className="p-4 text-sm text-stone-mute">
+                {q ? "No matching check-ins." : "No check-ins yet."}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {(list === "all" || list === "absent") && (
+        <section className="mt-8">
+          <h3 className="font-display text-lg">Not yet here</h3>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {missing.map((r) => (
+              <Link
+                key={r.id}
+                to={`/residents/${r.id}`}
+                className={clsx(
+                  "flex items-center gap-3 rounded-xl px-3 py-2 shadow-sm",
+                  isRa(r) ? "bg-amber-50 ring-1 ring-amber-300" : "bg-white",
+                )}
+              >
+                <Avatar resident={r} size={36} />
+                <span className="min-w-0 text-sm">
+                  <span className="flex flex-wrap items-center gap-2 font-medium">
+                    {fullName(r)}
+                    {isRa(r) && <RaBadge />}
+                  </span>
+                  <span className="block text-xs text-stone-mute">
+                    {r.room} · {r.hall}
+                    {r.email ? ` · ${r.email}` : ""}
+                  </span>
+                </span>
+              </Link>
+            ))}
+          </div>
+          {missing.length === 0 && (
+            <p className="mt-3 text-sm text-stone-mute">
+              {q ? "No matching people still out." : "Everyone on the roster is here."}
+            </p>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function PresentRow({
+  submission: s,
+  schema,
+}: {
+  submission: SubmissionRow;
+  schema: FormSchema;
+}) {
+  const resident = s.resident;
+  const name = resident ? fullName(resident) : s.guestName || "Guest";
+  const answers = formatAnswers(schema, s.responseData);
+  const inner = (
+    <>
+      {resident ? (
+        <Avatar resident={resident} />
+      ) : (
+        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-stone-200 text-sm font-semibold text-stone-mute">
+          {(s.guestName ?? "?")
+            .split(" ")
+            .map((p) => p[0])
+            .join("")
+            .slice(0, 2)}
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-2 font-medium">
+          {name}
+          {isRa(resident) && <RaBadge />}
+          {!resident && (
+            <span className="rounded-full bg-stone-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-mute">
+              Guest
+            </span>
+          )}
+        </p>
+        <p className="text-xs text-stone-mute">
+          {resident
+            ? [resident.room, resident.hall, resident.email].filter(Boolean).join(" · ")
+            : "Name written at check-in — not matched to the roster"}
+        </p>
+        {answers.length > 0 && (
+          <p className="mt-1 line-clamp-2 text-xs text-stone-mute">{answers.join(" · ")}</p>
+        )}
+      </div>
+      <div className="shrink-0 text-right text-xs text-stone-mute">
+        <p>{formatCheckIn(s.createdAt)}</p>
+        {s.distanceM != null && <p>{Math.round(s.distanceM)} m away</p>}
+        {s.accuracy != null && <p>±{Math.round(s.accuracy)} m GPS</p>}
+      </div>
+    </>
+  );
+
+  const cls = clsx(
+    "flex items-center gap-3 px-4 py-3",
+    isRa(resident) && "bg-amber-50/80",
+    resident && "hover:bg-stone-sand",
+  );
+
+  if (resident) {
+    return (
+      <Link to={`/residents/${resident.id}`} className={cls}>
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={cls}>{inner}</div>;
+}
+
+function formatAnswers(schema: FormSchema, data: Record<string, unknown> | null | undefined): string[] {
+  if (!data) return [];
+  return (schema.fields ?? [])
+    .map((field) => {
+      const value = data[field.id];
+      if (value == null || value === "" || value === false) return null;
+      const shown = Array.isArray(value) ? value.filter(Boolean).join(", ") : String(value);
+      if (!shown.trim()) return null;
+      return `${field.label}: ${shown}`;
+    })
+    .filter((v): v is string => Boolean(v));
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

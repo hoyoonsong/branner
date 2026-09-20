@@ -58,15 +58,19 @@ export function EditDetailsModal({
             <label className="mt-1 flex items-start gap-2 text-sm text-slate-700">
               <input type="radio" name="access" value="public" defaultChecked={!initial.requireLogin} className="mt-0.5" />
               <span>
-                <span className="font-medium">Public link</span>
-                <span className="block text-xs text-slate-500">Anyone with the QR / URL can submit.</span>
+                <span className="font-medium">Public link — no Stanford login</span>
+                <span className="block text-xs text-slate-500">
+                  Anyone with the QR / URL can submit. They type their first and last name.
+                </span>
               </span>
             </label>
             <label className="mt-2 flex items-start gap-2 text-sm text-slate-700">
               <input type="radio" name="access" value="staff" defaultChecked={initial.requireLogin} className="mt-0.5" />
               <span>
                 <span className="font-medium">Require Stanford login</span>
-                <span className="block text-xs text-slate-500">Residents sign in with @stanford.edu to verify identity.</span>
+                <span className="block text-xs text-slate-500">
+                  Residents sign in with @stanford.edu to verify identity.
+                </span>
               </span>
             </label>
           </fieldset>

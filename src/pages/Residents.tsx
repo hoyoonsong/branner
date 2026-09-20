@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Resident } from "../lib/types";
-import { fullName } from "../lib/utils";
+import { isRa, type Resident } from "../lib/types";
+import { clsx, fullName } from "../lib/utils";
 
 export function Residents() {
   const [q, setQ] = useState("");
@@ -21,7 +21,8 @@ export function Residents() {
     return () => clearTimeout(t);
   }, [q, hall]);
 
-  const halls = [...new Set(residents.map((r) => r.hall).filter(Boolean))];
+  const ras = useMemo(() => residents.filter((r) => isRa(r)), [residents]);
+  const others = useMemo(() => residents.filter((r) => !isRa(r)), [residents]);
 
   return (
     <div>
@@ -44,49 +45,108 @@ export function Residents() {
           ))}
         </select>
       </div>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {residents.map((r) => (
-          <Link
-            key={r.id}
-            to={`/residents/${r.id}`}
-            className="flex gap-3 rounded-2xl bg-white p-3 shadow-sm hover:shadow"
-          >
-            <Avatar resident={r} />
-            <div className="min-w-0">
-              <p className="font-medium">{fullName(r)}</p>
-              <p className="text-sm text-stone-mute">
-                {r.room} · {r.hall}
-              </p>
-              <p className="truncate text-xs text-stone-mute">{r.email}</p>
-            </div>
-          </Link>
-        ))}
-      </div>
-      {halls.length === 0 && residents.length === 0 && (
+
+      {ras.length > 0 && (
+        <section className="mt-8">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-xl">Resident Assistants</h2>
+            <p className="text-xs font-medium uppercase tracking-wide text-amber-700">{ras.length} RAs</p>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {ras.map((r) => (
+              <ResidentLink key={r.id} resident={r} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className={ras.length > 0 ? "mt-8" : "mt-6"}>
+        {ras.length > 0 && <h2 className="font-display text-xl">Residents</h2>}
+        <div className={clsx("grid gap-3 sm:grid-cols-2 lg:grid-cols-3", ras.length > 0 && "mt-3")}>
+          {others.map((r) => (
+            <ResidentLink key={r.id} resident={r} />
+          ))}
+        </div>
+      </section>
+
+      {residents.length === 0 && (
         <p className="mt-8 text-sm text-stone-mute">No residents yet. Run the roster import.</p>
       )}
     </div>
   );
 }
 
-export function Avatar({ resident, size = 48 }: { resident: Pick<Resident, "photoPath" | "firstName" | "lastName">; size?: number }) {
-  if (resident.photoPath) {
-    return (
-      <img
-        src={resident.photoPath}
-        alt=""
-        className="rounded-xl object-cover"
-        style={{ width: size, height: size }}
-      />
-    );
-  }
+function ResidentLink({ resident }: { resident: Resident }) {
+  const ra = isRa(resident);
   return (
-    <div
-      className="grid place-items-center rounded-xl bg-cardinal/10 text-sm font-semibold text-cardinal"
-      style={{ width: size, height: size }}
+    <Link
+      to={`/residents/${resident.id}`}
+      className={clsx(
+        "flex gap-3 rounded-2xl p-3 shadow-sm hover:shadow",
+        ra ? "bg-amber-50 ring-2 ring-amber-400" : "bg-white",
+      )}
     >
-      {resident.firstName[0]}
-      {resident.lastName[0]}
+      <Avatar resident={resident} />
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-center gap-2 font-medium">
+          {fullName(resident)}
+          {ra && <RaBadge />}
+        </p>
+        <p className="text-sm text-stone-mute">
+          {resident.room} · {resident.hall}
+        </p>
+        <p className="truncate text-xs text-stone-mute">{resident.email}</p>
+      </div>
+    </Link>
+  );
+}
+
+export function RaBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+      RA
+    </span>
+  );
+}
+
+export function Avatar({
+  resident,
+  size = 48,
+}: {
+  resident: Pick<Resident, "photoPath" | "firstName" | "lastName"> & { type?: string | null };
+  size?: number;
+}) {
+  const ra = isRa(resident);
+  const radius = size >= 80 ? "rounded-2xl" : "rounded-xl";
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <div
+        className={clsx("h-full w-full overflow-hidden", radius, ra && "ring-2 ring-amber-400 ring-offset-1")}
+      >
+        {resident.photoPath ? (
+          <img src={resident.photoPath} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <div
+            className={clsx(
+              "grid h-full w-full place-items-center text-sm font-semibold",
+              ra ? "bg-amber-100 text-amber-800" : "bg-cardinal/10 text-cardinal",
+            )}
+          >
+            {resident.firstName[0]}
+            {resident.lastName?.[0] ?? ""}
+          </div>
+        )}
+      </div>
+      {ra && (
+        <span
+          className={clsx(
+            "absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-amber-500 font-bold uppercase tracking-wide text-white shadow-sm",
+            size >= 64 ? "px-1.5 py-0.5 text-[10px]" : "px-1 py-px text-[8px]",
+          )}
+        >
+          RA
+        </span>
+      )}
     </div>
   );
 }

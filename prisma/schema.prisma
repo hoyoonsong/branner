@@ -71,18 +71,19 @@ model Event {
 }
 
 model Submission {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   eventId      String
-  residentId   String
-  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  resident     Resident @relation(fields: [residentId], references: [id])
-  responseData String   @default("{}")
+  residentId   String?
+  event        Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  resident     Resident? @relation(fields: [residentId], references: [id])
+  guestName    String?
+  responseData String    @default("{}")
   lat          Float?
   lng          Float?
   accuracy     Float?
   distanceM    Float?
-  status       String   @default("present")
-  createdAt    DateTime @default(now())
+  status       String    @default("present")
+  createdAt    DateTime  @default(now())
 
   @@unique([eventId, residentId])
 }

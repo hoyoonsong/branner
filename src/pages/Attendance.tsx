@@ -186,9 +186,19 @@ function NewEventModal({
           value={startsAt}
           onChange={(e) => setStartsAt(e.target.value)}
         />
-        <label className="mt-4 flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={requireLogin} onChange={(e) => setRequireLogin(e.target.checked)} />
-          Require Stanford login to verify identity
+        <label className="mt-4 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={requireLogin}
+            onChange={(e) => setRequireLogin(e.target.checked)}
+          />
+          <span>
+            Require Stanford login to verify identity
+            <span className="block text-xs text-stone-mute">
+              Off: no Stanford login. Respondents type their first and last name.
+            </span>
+          </span>
         </label>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input type="checkbox" checked={locationTracking} onChange={(e) => setLocationTracking(e.target.checked)} />

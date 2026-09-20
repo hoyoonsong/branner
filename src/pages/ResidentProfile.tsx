@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Resident } from "../lib/types";
-import { fullName } from "../lib/utils";
-import { Avatar } from "./Residents";
+import { isRa, type Resident } from "../lib/types";
+import { clsx, fullName } from "../lib/utils";
+import { Avatar, RaBadge } from "./Residents";
 
 export function ResidentProfile() {
   const { id } = useParams();
@@ -34,12 +34,20 @@ export function ResidentProfile() {
       <Link to="/residents" className="text-sm text-cardinal">
         ← Residents
       </Link>
-      <div className="mt-4 flex gap-5 rounded-2xl bg-white p-6 shadow-sm">
+      <div
+        className={clsx(
+          "mt-4 flex gap-5 rounded-2xl p-6 shadow-sm",
+          isRa(resident) ? "bg-amber-50 ring-2 ring-amber-400" : "bg-white",
+        )}
+      >
         <Avatar resident={resident} size={112} />
         <div>
-          <h1 className="font-display text-3xl">{fullName(resident)}</h1>
+          <h1 className="flex flex-wrap items-center gap-2 font-display text-3xl">
+            {fullName(resident)}
+            {isRa(resident) && <RaBadge />}
+          </h1>
           <p className="text-stone-mute">
-            {resident.type} · {resident.hall}
+            {isRa(resident) ? "Resident Assistant" : resident.type} · {resident.hall}
           </p>
           <p className="mt-1 text-sm">
             Room {resident.bedSlot} ({resident.room})

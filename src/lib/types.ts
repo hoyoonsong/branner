@@ -212,6 +212,10 @@ export type Resident = {
   notes: string;
 };
 
+export function isRa(resident: { type?: string | null } | null | undefined): boolean {
+  return (resident?.type ?? "").trim().toUpperCase() === "RA";
+}
+
 export type FormStatus = "draft" | "published";
 
 export type EventType = { id: string; label: string; slug: string };

@@ -10,6 +10,7 @@ const CSV_CANDIDATES = [
   "/Users/hoyoonsong/.cursor/projects/Users-hoyoonsong-branner/attachments/2a242188-129e-419b-8ece-0e3cf0e1c6c7/Roster_2026-27_-_HousingExportAug16.csv",
 ];
 const PHOTO_DIRS = [
+  path.join(ROOT, "data", "ra-photos"),
   path.join(ROOT, "data", "photos-src"),
   path.join(ROOT, "data", "Frosh ID Photos (160 as of Aug 20)"),
 ];
@@ -88,10 +89,11 @@ async function main() {
   if (!csvPath) {
     throw new Error("Roster CSV not found. Put it at data/roster.csv");
   }
-  const photoSrc = PHOTO_DIRS.find((p) => existsSync(p));
-  const photoFiles = photoSrc
-    ? readdirSync(photoSrc).filter((f) => /\.jpe?g$/i.test(f))
-    : [];
+  const photoFiles = PHOTO_DIRS.filter((p) => existsSync(p)).flatMap((dir) =>
+    readdirSync(dir)
+      .filter((f) => /\.jpe?g$/i.test(f))
+      .map((file) => ({ file, dir })),
+  );
   const destDir = path.join(ROOT, "uploads", "residents");
   mkdirSync(destDir, { recursive: true });
 
@@ -117,14 +119,14 @@ async function main() {
     let photoPath: string | null = null;
     let legalName: string | null = null;
     if (photoFiles.length) {
-      let best = { file: "", score: 0 };
-      for (const file of photoFiles) {
-        const s = scoreName(preferred, file);
-        if (s > best.score) best = { file, score: s };
+      let best = { file: "", dir: "", score: 0 };
+      for (const photo of photoFiles) {
+        const s = scoreName(preferred, photo.file);
+        if (s > best.score) best = { ...photo, score: s };
       }
       if (best.score >= 4) {
         const destName = `${email.replace(/[^a-z0-9.@-]/g, "_")}.jpg`;
-        copyFileSync(path.join(photoSrc!, best.file), path.join(destDir, destName));
+        copyFileSync(path.join(best.dir, best.file), path.join(destDir, destName));
         photoPath = `/uploads/residents/${destName}`;
         legalName = best.file.replace(/\.jpe?g$/i, "");
         matched++;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import type { Resident } from "../lib/types";
+import { isRa, type Resident } from "../lib/types";
 import {
   buildingForFloor,
   corridorsForFloor,
@@ -9,6 +9,7 @@ import {
   type RoomSpot,
 } from "../data/rooms";
 import { clsx, fullName } from "../lib/utils";
+import { Avatar, RaBadge } from "./Residents";
 
 const HALL_FILL: Record<string, string> = {
   "Banana Treats": "#FFF6EC",
@@ -151,26 +152,27 @@ export function MapPage() {
             {picked[0]?.hall || selectedSpot.hall}
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {picked.map((r) => (
+            {[...picked]
+              .sort((a, b) => Number(isRa(b)) - Number(isRa(a)))
+              .map((r) => (
               <Link
                 key={r.id}
                 to={`/residents/${r.id}`}
-                className="flex items-center gap-3 rounded-xl p-2 hover:bg-stone-sand"
-              >
-                {r.photoPath ? (
-                  <img
-                    src={r.photoPath}
-                    alt=""
-                    className="h-12 w-12 rounded-lg object-cover"
-                  />
-                ) : (
-                  <div className="grid h-12 w-12 place-items-center rounded-lg bg-cardinal/10 text-cardinal">
-                    {r.firstName[0]}
-                  </div>
+                className={clsx(
+                  "flex items-center gap-3 rounded-xl p-2 hover:bg-stone-sand",
+                  isRa(r) && "bg-amber-50 ring-1 ring-amber-300",
                 )}
+              >
+                <Avatar resident={r} size={48} />
                 <div>
-                  <p className="font-medium">{fullName(r)}</p>
-                  <p className="text-xs text-stone-mute">{r.bedSlot}</p>
+                  <p className="flex flex-wrap items-center gap-2 font-medium">
+                    {fullName(r)}
+                    {isRa(r) && <RaBadge />}
+                  </p>
+                  <p className="text-xs text-stone-mute">
+                    {r.bedSlot}
+                    {isRa(r) ? " · Resident Assistant" : ""}
+                  </p>
                 </div>
               </Link>
             ))}
@@ -199,11 +201,16 @@ function RoomCell({
 }) {
   const amenity = spot.kind === "amenity";
   const lounge = spot.kind === "lounge";
+  const hasRa = people.some((p) => isRa(p));
   const fill = active
-    ? "#8C1515"
+    ? hasRa
+      ? "#B45309"
+      : "#8C1515"
     : amenity
       ? "#EDE7DF"
-      : (HALL_FILL[spot.hall] ?? "white");
+      : hasRa
+        ? "#FFF7E6"
+        : (HALL_FILL[spot.hall] ?? "white");
   return (
     <g onClick={onSelect} className={amenity ? undefined : "cursor-pointer"}>
       <rect
@@ -213,7 +220,8 @@ function RoomCell({
         height={spot.h}
         rx={lounge ? 8 : 5}
         fill={fill}
-        stroke={active ? "#6B1010" : "#C4B6A6"}
+        stroke={active ? (hasRa ? "#92400E" : "#6B1010") : hasRa ? "#D97706" : "#C4B6A6"}
+        strokeWidth={hasRa ? 2 : 1}
       />
       <text
         x={spot.x + spot.w / 2}
@@ -247,13 +255,23 @@ function RoomCell({
           {spot.room}
         </text>
       )}
+      {!amenity && hasRa && (
+        <text
+          x={spot.x + 4}
+          y={spot.y + 10}
+          fontSize="8"
+          fill={active ? "white" : "#B45309"}
+        >
+          RA
+        </text>
+      )}
       {!amenity && people.length > 0 && (
         <text
           x={spot.x + spot.w - 4}
           y={spot.y + 10}
           textAnchor="end"
           fontSize="8"
-          fill={active ? "white" : "#8C1515"}
+          fill={active ? "white" : hasRa ? "#B45309" : "#8C1515"}
         >
           {people.length}
         </text>

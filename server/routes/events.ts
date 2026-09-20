@@ -66,7 +66,9 @@ eventsRouter.get("/:id", async (req, res) => {
     where: { building: "Branner" },
     orderBy: [{ hall: "asc" }, { lastName: "asc" }],
   });
-  const presentIds = new Set(submissions.map((s) => s.residentId));
+  const presentIds = new Set(
+    submissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
+  );
   const absent = residents.filter((r) => !presentIds.has(r.id));
   const byHall: Record<string, { present: number; expected: number }> = {};
   for (const r of residents) {

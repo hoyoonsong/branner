@@ -17,9 +17,12 @@ residentsRouter.get("/", async (req, res) => {
             OR: [
               { firstName: { contains: q } },
               { lastName: { contains: q } },
+              { legalName: { contains: q } },
               { email: { contains: q } },
               { room: { contains: q } },
               { bedSlot: { contains: q } },
+              { type: { contains: q } },
+              { hall: { contains: q } },
             ],
           }
         : {}),

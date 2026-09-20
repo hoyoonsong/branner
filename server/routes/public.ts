@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../prisma.js";
 import { currentIdentity } from "../auth.js";
 import { haversineMeters } from "../geo.js";
+import { matchResidentByName, normName } from "../names.js";
 
 export const publicRouter = Router();
 
@@ -25,7 +26,7 @@ publicRouter.get("/events/:slug", async (req, res) => {
       slug: event.slug,
       startsAt: event.startsAt,
       endsAt: event.endsAt,
-      requireLogin: true,
+      requireLogin: event.requireLogin,
       locationTracking: event.locationTracking,
       lat: event.lat,
       lng: event.lng,
@@ -44,6 +45,7 @@ publicRouter.get("/events/:slug", async (req, res) => {
             room: resident.room,
             hall: resident.hall,
             photoPath: resident.photoPath,
+            type: resident.type,
           },
         }
       : identity
@@ -62,14 +64,35 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
   }
 
   const identity = currentIdentity(req);
-  if (!identity) {
-    res.status(401).json({ error: "Sign in with Stanford to check in" });
-    return;
-  }
-  const resident = await prisma.resident.findUnique({ where: { email: identity.email } });
-  if (!resident) {
-    res.status(403).json({ error: "Your Stanford email is not on the Branner roster" });
-    return;
+  const firstName = String(req.body?.firstName ?? "").trim();
+  const lastName = String(req.body?.lastName ?? "").trim();
+  const guestName = `${firstName} ${lastName}`.trim();
+
+  let resident = identity
+    ? await prisma.resident.findUnique({ where: { email: identity.email } })
+    : null;
+
+  if (event.requireLogin) {
+    if (!identity) {
+      res.status(401).json({ error: "Sign in with Stanford to check in" });
+      return;
+    }
+    if (!resident) {
+      res.status(403).json({ error: "Your Stanford email is not on the Branner roster" });
+      return;
+    }
+  } else {
+    if (!guestName) {
+      res.status(400).json({ error: "Enter your first and last name" });
+      return;
+    }
+    const roster = await prisma.resident.findMany({
+      select: { id: true, firstName: true, lastName: true, legalName: true },
+    });
+    const matched = matchResidentByName(firstName, lastName, roster);
+    resident = matched
+      ? await prisma.resident.findUnique({ where: { id: matched.id } })
+      : null;
   }
 
   let distanceM: number | null = null;
@@ -101,27 +124,73 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     }
   }
 
-  const submission = await prisma.submission.upsert({
-    where: { eventId_residentId: { eventId: event.id, residentId: resident.id } },
-    create: {
-      eventId: event.id,
-      residentId: resident.id,
-      responseData: JSON.stringify(answers),
-      lat,
-      lng,
-      accuracy,
-      distanceM,
-      status: "present",
-    },
-    update: {
-      responseData: JSON.stringify(answers),
-      lat,
-      lng,
-      accuracy,
-      distanceM,
-      status: "present",
+  const payload = {
+    responseData: JSON.stringify(answers),
+    lat,
+    lng,
+    accuracy,
+    distanceM,
+    status: "present",
+    guestName: resident ? null : guestName || null,
+  };
+
+  const submission = resident
+    ? await prisma.submission.upsert({
+        where: { eventId_residentId: { eventId: event.id, residentId: resident.id } },
+        create: {
+          eventId: event.id,
+          residentId: resident.id,
+          ...payload,
+        },
+        update: payload,
+      })
+    : await upsertGuestSubmission(event.id, guestName, payload);
+
+  res.json({
+    ok: true,
+    submissionId: submission.id,
+    distanceM,
+    resident: resident
+      ? {
+          id: resident.id,
+          firstName: resident.firstName,
+          lastName: resident.lastName,
+          room: resident.room,
+          hall: resident.hall,
+        }
+      : null,
+    guestName: resident ? null : guestName,
+  });
+});
+
+async function upsertGuestSubmission(
+  eventId: string,
+  guestName: string,
+  payload: {
+    responseData: string;
+    lat: number | null;
+    lng: number | null;
+    accuracy: number | null;
+    distanceM: number | null;
+    status: string;
+    guestName: string | null;
+  },
+) {
+  const existing = await prisma.submission.findMany({
+    where: { eventId, residentId: null },
+  });
+  const prior = existing.find((row) => normName(row.guestName ?? "") === normName(guestName));
+  if (prior) {
+    return prisma.submission.update({
+      where: { id: prior.id },
+      data: payload,
+    });
+  }
+  return prisma.submission.create({
+    data: {
+      eventId,
+      residentId: null,
+      ...payload,
     },
   });
-
-  res.json({ ok: true, submissionId: submission.id, distanceM });
-});
+}
