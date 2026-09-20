@@ -16,7 +16,7 @@ npm run import:roster
 npm run dev
 ```
 
-Open http://localhost:5173. Until Google OAuth is filled in, `ALLOW_DEV_LOGIN=1` lets you request access with a `@stanford.edu` email.
+Open http://localhost:5174. Until Google OAuth is filled in, `ALLOW_DEV_LOGIN=1` lets you request access with a `@stanford.edu` email.
 
 ## Railway + Stanford Google
 
@@ -32,17 +32,17 @@ Create this with a **personal Gmail** if your SUNet account cannot create OAuth 
    - User type: **External**
    - App name: `Branner`
    - Support email: your address
-   - Authorized domains: `up.railway.app` (plus a custom domain later if you add one)
+   - Authorized domains: `hoyoonsong.com`, `up.railway.app`
    - Scopes: `email`, `profile`, `openid`
    - Test users: every `@stanford.edu` address that should sign in while the app is in Testing
 4. **Credentials → Create credentials → OAuth client ID → Web application**
    - Name: `Branner web`
    - Authorized JavaScript origins:
-     - `http://localhost:5173`
-     - `https://<your-service>.up.railway.app`
+     - `http://localhost:5174`
+     - `https://branner.hoyoonsong.com`
    - Authorized redirect URIs:
-     - `http://localhost:5173/api/auth/google/callback`
-     - `https://<your-service>.up.railway.app/api/auth/google/callback`
+     - `http://localhost:5174/api/auth/google/callback`
+     - `https://branner.hoyoonsong.com/api/auth/google/callback`
 5. Copy the client ID and secret.
 
 The app already sends `hd=stanford.edu` and rejects any email that is not `@stanford.edu`. That is the Stanford restriction — not official WebLogin/SAML.
@@ -61,7 +61,7 @@ In the Railway project (currently `joyful-truth`):
 | `SESSION_SECRET` | output of `openssl rand -hex 32` |
 | `GOOGLE_CLIENT_ID` | from Google Cloud |
 | `GOOGLE_CLIENT_SECRET` | from Google Cloud |
-| `PUBLIC_URL` | `https://<your-service>.up.railway.app` |
+| `PUBLIC_URL` | `https://branner.hoyoonsong.com` |
 | `ALLOW_DEV_LOGIN` | `0` |
 | `DATA_DIR` | `/data` |
 | `DATABASE_URL` | `file:/data/branner.db` |

@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-server
+sessions
+*.db
+*.db-journal
+.env
+uploads
+data/photos
+data/photos-src
+data/Frosh ID Photos*
+data-runtime
+.DS_Store
