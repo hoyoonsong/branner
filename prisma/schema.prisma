@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  googleId  String?  @unique
+  email     String   @unique
+  name      String
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Resident {
+  id            String   @id @default(cuid())
+  firstName     String
+  lastName      String
+  legalName     String?
+  email         String   @unique
+  building      String
+  bedSlot       String
+  room          String
+  hall          String
+  type          String
+  gender        String?
+  minor         String?
+  hometown      String?
+  country       String?
+  phone         String?
+  suid          String?
+  tshirtSize    String?
+  checkIn       String?
+  earlyArrival  String?
+  photoPath     String?
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  submissions   Submission[]
+}
+
+model EventType {
+  id     String  @id @default(cuid())
+  label  String
+  slug   String  @unique
+  events Event[]
+}
+
+model Event {
+  id               String    @id @default(cuid())
+  title            String
+  eventTypeId      String
+  eventType        EventType @relation(fields: [eventTypeId], references: [id])
+  startsAt         DateTime
+  endsAt           DateTime?
+  requireLogin     Boolean   @default(false)
+  locationTracking Boolean   @default(true)
+  lat              Float?
+  lng              Float?
+  radiusMeters     Int       @default(80)
+  formSchema       String    @default("{\"fields\":[]}")
+  slug             String    @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  submissions      Submission[]
+}
+
+model Submission {
+  id           String   @id @default(cuid())
+  eventId      String
+  residentId   String
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  resident     Resident @relation(fields: [residentId], references: [id])
+  responseData String   @default("{}")
+  lat          Float?
+  lng          Float?
+  accuracy     Float?
+  distanceM    Float?
+  status       String   @default("present")
+  createdAt    DateTime @default(now())
+
+  @@unique([eventId, residentId])
+}
