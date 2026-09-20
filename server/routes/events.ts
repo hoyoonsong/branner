@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../prisma.js";
 import { requireApproved } from "../auth.js";
 import { BRANNER_LAT, BRANNER_LNG } from "../geo.js";
+import { eventIsHouseMeeting, isHouseMeeting, isRa } from "../roster.js";
 import { slugify, uniqueSlug } from "../slug.js";
 
 export const eventsRouter = Router();
@@ -42,10 +43,20 @@ eventsRouter.post("/types", async (req, res) => {
 
 eventsRouter.get("/", async (_req, res) => {
   const events = await prisma.event.findMany({
-    include: { eventType: true, _count: { select: { submissions: true } } },
+    include: {
+      eventType: true,
+      submissions: { include: { resident: { select: { type: true } } } },
+    },
     orderBy: { startsAt: "desc" },
   });
-  res.json({ events });
+  res.json({
+    events: events.map(({ submissions, ...event }) => ({
+      ...event,
+      _count: {
+        submissions: countedSubmissions(event, submissions).length,
+      },
+    })),
+  });
 });
 
 eventsRouter.get("/:id", async (req, res) => {
@@ -66,12 +77,15 @@ eventsRouter.get("/:id", async (req, res) => {
     where: { building: "Branner" },
     orderBy: [{ hall: "asc" }, { lastName: "asc" }],
   });
+  const houseMeeting = eventIsHouseMeeting(event);
+  const expected = houseMeeting ? residents.filter((r) => !isRa(r.type)) : residents;
+  const visibleSubmissions = countedSubmissions(event, submissions);
   const presentIds = new Set(
-    submissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
+    visibleSubmissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
   );
-  const absent = residents.filter((r) => !presentIds.has(r.id));
+  const absent = expected.filter((r) => !presentIds.has(r.id));
   const byHall: Record<string, { present: number; expected: number }> = {};
-  for (const r of residents) {
+  for (const r of expected) {
     byHall[r.hall] ??= { present: 0, expected: 0 };
     byHall[r.hall].expected += 1;
     if (presentIds.has(r.id)) byHall[r.hall].present += 1;
@@ -84,8 +98,8 @@ eventsRouter.get("/:id", async (req, res) => {
     })),
     absent,
     analytics: {
-      present: submissions.length,
-      expected: residents.length,
+      present: visibleSubmissions.length,
+      expected: expected.length,
       absent: absent.length,
       byHall,
     },
@@ -106,6 +120,8 @@ eventsRouter.post("/", async (req, res) => {
     return;
   }
   const locationTracking = Boolean(req.body?.locationTracking ?? true);
+  const houseMeeting =
+    req.body?.houseMeeting != null ? Boolean(req.body.houseMeeting) : eventIsHouseMeeting({ eventType: type });
   const event = await prisma.event.create({
     data: {
       title,
@@ -114,6 +130,8 @@ eventsRouter.post("/", async (req, res) => {
       endsAt: req.body?.endsAt ? new Date(req.body.endsAt) : null,
       requireLogin: req.body?.requireLogin !== false,
       locationTracking,
+      houseMeeting,
+      oneResponse: req.body?.oneResponse !== false,
       lat: locationTracking ? Number(req.body?.lat ?? BRANNER_LAT) : null,
       lng: locationTracking ? Number(req.body?.lng ?? BRANNER_LNG) : null,
       radiusMeters: locationTracking ? Number(req.body?.radiusMeters ?? 80) : 80,
@@ -130,15 +148,23 @@ eventsRouter.post("/", async (req, res) => {
 eventsRouter.patch("/:id", async (req, res) => {
   const data: Record<string, unknown> = {};
   if (req.body.title != null) data.title = String(req.body.title);
-  if (req.body.eventTypeId != null) data.eventTypeId = String(req.body.eventTypeId);
+  if (req.body.eventTypeId != null) {
+    data.eventTypeId = String(req.body.eventTypeId);
+    if (req.body.houseMeeting == null) {
+      const nextType = await prisma.eventType.findUnique({ where: { id: String(req.body.eventTypeId) } });
+      if (nextType) data.houseMeeting = isHouseMeeting(nextType);
+    }
+  }
   if (req.body.startsAt != null) data.startsAt = new Date(req.body.startsAt);
   if (req.body.endsAt !== undefined)
     data.endsAt = req.body.endsAt ? new Date(req.body.endsAt) : null;
   if (req.body.requireLogin != null) data.requireLogin = Boolean(req.body.requireLogin);
   if (req.body.locationTracking != null)
     data.locationTracking = Boolean(req.body.locationTracking);
-  if (req.body.lat != null) data.lat = Number(req.body.lat);
-  if (req.body.lng != null) data.lng = Number(req.body.lng);
+  if (req.body.houseMeeting != null) data.houseMeeting = Boolean(req.body.houseMeeting);
+  if (req.body.oneResponse != null) data.oneResponse = Boolean(req.body.oneResponse);
+  if (req.body.lat !== undefined) data.lat = req.body.lat == null || req.body.lat === "" ? null : Number(req.body.lat);
+  if (req.body.lng !== undefined) data.lng = req.body.lng == null || req.body.lng === "" ? null : Number(req.body.lng);
   if (req.body.radiusMeters != null) data.radiusMeters = Number(req.body.radiusMeters);
   if (req.body.formSchema != null) data.formSchema = JSON.stringify(req.body.formSchema);
   const event = await prisma.event.update({
@@ -153,3 +179,16 @@ eventsRouter.delete("/:id", async (req, res) => {
   await prisma.event.delete({ where: { id: req.params.id } });
   res.json({ ok: true });
 });
+
+function countedSubmissions<
+  T extends { resident?: { type?: string | null } | null; residentId?: string | null },
+>(
+  event: {
+    houseMeeting?: boolean | null;
+    eventType?: { slug?: string | null; label?: string | null } | null;
+  },
+  submissions: T[],
+): T[] {
+  if (!eventIsHouseMeeting(event)) return submissions;
+  return submissions.filter((s) => !isRa(s.resident?.type));
+}

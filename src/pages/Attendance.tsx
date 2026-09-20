@@ -108,6 +108,7 @@ function NewEventModal({
   const [startsAt, setStartsAt] = useState("");
   const [requireLogin, setRequireLogin] = useState(true);
   const [locationTracking, setLocationTracking] = useState(true);
+  const [oneResponse, setOneResponse] = useState(true);
   const [lat, setLat] = useState(BRANNER_LAT);
   const [lng, setLng] = useState(BRANNER_LNG);
   const [radiusMeters, setRadiusMeters] = useState(80);
@@ -142,6 +143,7 @@ function NewEventModal({
           startsAt: startsAt || new Date().toISOString(),
           requireLogin,
           locationTracking,
+          oneResponse,
           lat,
           lng,
           radiusMeters,
@@ -197,6 +199,20 @@ function NewEventModal({
             Require Stanford login to verify identity
             <span className="block text-xs text-stone-mute">
               Off: no Stanford login. Respondents type their first and last name.
+            </span>
+          </span>
+        </label>
+        <label className="mt-3 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={oneResponse}
+            onChange={(e) => setOneResponse(e.target.checked)}
+          />
+          <span>
+            One response per person
+            <span className="block text-xs text-stone-mute">
+              After someone checks in, they cannot submit again.
             </span>
           </span>
         </label>

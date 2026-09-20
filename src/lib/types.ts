@@ -216,6 +216,22 @@ export function isRa(resident: { type?: string | null } | null | undefined): boo
   return (resident?.type ?? "").trim().toUpperCase() === "RA";
 }
 
+export function isHouseMeeting(
+  eventType?: { slug?: string | null; label?: string | null } | null,
+): boolean {
+  if (!eventType) return false;
+  const slug = (eventType.slug ?? "").toLowerCase();
+  return slug === "house-meeting" || /house\s*meeting/i.test(eventType.label ?? "");
+}
+
+export function eventIsHouseMeeting(event: {
+  houseMeeting?: boolean | null;
+  eventType?: { slug?: string | null; label?: string | null } | null;
+}): boolean {
+  if (typeof event.houseMeeting === "boolean") return event.houseMeeting;
+  return isHouseMeeting(event.eventType);
+}
+
 export type FormStatus = "draft" | "published";
 
 export type EventType = { id: string; label: string; slug: string };
@@ -229,6 +245,8 @@ export type AttendanceEvent = {
   endsAt: string | null;
   requireLogin: boolean;
   locationTracking: boolean;
+  houseMeeting?: boolean | null;
+  oneResponse?: boolean;
   lat: number | null;
   lng: number | null;
   radiusMeters: number;

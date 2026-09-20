@@ -11,12 +11,13 @@ type PublicEvent = {
   title: string;
   requireLogin: boolean;
   locationTracking: boolean;
+  oneResponse?: boolean;
   lat: number | null;
   lng: number | null;
   radiusMeters: number;
   slug: string;
   formSchema: FormSchema;
-  eventType?: { label: string };
+  eventType?: { slug?: string; label: string };
 };
 
 type Identity = {
@@ -29,6 +30,7 @@ type Identity = {
     room: string;
     hall: string;
     photoPath?: string | null;
+    type?: string | null;
   } | null;
 };
 
@@ -53,28 +55,90 @@ export function PublicAttendance() {
   const [lastName, setLastName] = useState("");
   const watchRef = useRef<number | null>(null);
 
-  const load = async () => {
+  const rememberDone = (
+    slugKey: string,
+    first: string,
+    last: string,
+    message: string,
+  ) => {
+    sessionStorage.setItem(
+      `branner-done:${slugKey}`,
+      JSON.stringify({ firstName: first, lastName: last, message }),
+    );
+    setDone(message);
+  };
+
+  const load = async (name?: { firstName: string; lastName: string }) => {
+    const first = (name?.firstName ?? firstName).trim();
+    const last = (name?.lastName ?? lastName).trim();
+    const qs = new URLSearchParams();
+    if (first) qs.set("firstName", first);
+    if (last) qs.set("lastName", last);
+    const suffix = qs.toString() ? `?${qs}` : "";
     const data = await api<{
       event: PublicEvent;
       identity: Identity | null;
+      alreadySubmitted?: boolean;
+      alreadyAs?: string | null;
       googleEnabled: boolean;
       allowDevLogin: boolean;
-    }>(`/api/public/events/${slug}`);
+    }>(`/api/public/events/${slug}${suffix}`);
     let nextEvent = data.event;
     try {
-      const staff = await api<{ events: { id: string; slug: string; requireLogin: boolean }[] }>(
-        "/api/events",
+      const staff = await api<{
+        events: {
+          id: string;
+          slug: string;
+          requireLogin: boolean;
+          oneResponse?: boolean;
+        }[];
+      }>("/api/events");
+      const match = staff.events.find(
+        (e) => e.slug === nextEvent.slug || e.id === nextEvent.id,
       );
-      const match = staff.events.find((e) => e.slug === nextEvent.slug || e.id === nextEvent.id);
-      if (match) nextEvent = { ...nextEvent, requireLogin: match.requireLogin };
+      if (match) {
+        nextEvent = {
+          ...nextEvent,
+          requireLogin: match.requireLogin,
+          oneResponse: match.oneResponse ?? nextEvent.oneResponse,
+        };
+      }
     } catch {
       /* visitors are not staff — trust the public payload */
     }
     setEvent(nextEvent);
     setIdentity(data.identity);
     setAllowDevLogin(data.allowDevLogin);
-    if (data.event.locationTracking) {
-      setLoc((prev) => (prev === "inside" || prev === "outside" ? prev : "prompt"));
+    if (data.alreadySubmitted) {
+      const who =
+        data.alreadyAs ||
+        (data.identity?.resident
+          ? `${data.identity.resident.firstName} ${data.identity.resident.lastName}`
+          : `${first} ${last}`.trim());
+      rememberDone(
+        nextEvent.slug,
+        data.identity?.resident?.firstName ?? first,
+        data.identity?.resident?.lastName ?? last,
+        `${who} already checked in.`,
+      );
+    } else {
+      try {
+        const prior = JSON.parse(
+          sessionStorage.getItem(`branner-done:${nextEvent.slug}`) || "{}",
+        ) as { firstName?: string; lastName?: string };
+        const same =
+          `${prior.firstName ?? ""} ${prior.lastName ?? ""}`
+            .trim()
+            .toLowerCase() === `${first} ${last}`.trim().toLowerCase();
+        if (!same) setDone("");
+      } catch {
+        /* keep current done */
+      }
+    }
+    if (nextEvent.locationTracking) {
+      setLoc((prev) =>
+        prev === "inside" || prev === "outside" ? prev : "prompt",
+      );
       setAsk(true);
     } else {
       setLoc("off");
@@ -82,21 +146,54 @@ export function PublicAttendance() {
   };
 
   useEffect(() => {
-    load().catch((e) => setError((e as Error).message));
+    if (!slug) return;
+    let first = "";
+    let last = "";
+    try {
+      const raw = sessionStorage.getItem(`branner-name:${slug}`);
+      const saved = raw
+        ? (JSON.parse(raw) as { firstName?: string; lastName?: string })
+        : {};
+      first = saved.firstName ?? "";
+      last = saved.lastName ?? "";
+      setFirstName(first);
+      setLastName(last);
+      const doneRaw = sessionStorage.getItem(`branner-done:${slug}`);
+      if (doneRaw) {
+        const prior = JSON.parse(doneRaw) as {
+          firstName?: string;
+          lastName?: string;
+          message?: string;
+        };
+        const samePerson =
+          `${prior.firstName ?? ""} ${prior.lastName ?? ""}`
+            .trim()
+            .toLowerCase() === `${first} ${last}`.trim().toLowerCase();
+        if (samePerson && prior.message) setDone(prior.message);
+      }
+    } catch {
+      /* ignore */
+    }
+    load({ firstName: first, lastName: last }).catch((e) =>
+      setError((e as Error).message),
+    );
     return () => {
-      if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
+      if (watchRef.current != null)
+        navigator.geolocation.clearWatch(watchRef.current);
     };
   }, [slug]);
 
   const startWatch = () => {
-    if (!event?.locationTracking || event.lat == null || event.lng == null) return;
+    if (!event?.locationTracking || event.lat == null || event.lng == null)
+      return;
     setAsk(false);
     setLoc("locating");
     if (!("geolocation" in navigator)) {
       setLoc("denied");
       return;
     }
-    if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
+    if (watchRef.current != null)
+      navigator.geolocation.clearWatch(watchRef.current);
     watchRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         const next = {
@@ -115,20 +212,21 @@ export function PublicAttendance() {
   };
 
   useEffect(() => {
-    if (!slug) return;
-    try {
-      const raw = sessionStorage.getItem(`branner-name:${slug}`);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as { firstName?: string; lastName?: string };
-      setFirstName(saved.firstName ?? "");
-      setLastName(saved.lastName ?? "");
-    } catch {
-      /* ignore */
-    }
-  }, [slug]);
+    if (!slug || !event || event.requireLogin || event.oneResponse === false)
+      return;
+    const first = firstName.trim();
+    const last = lastName.trim();
+    if (!first || !last) return;
+    const t = window.setTimeout(() => {
+      load({ firstName: first, lastName: last }).catch(() => undefined);
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [slug, event?.requireLogin, event?.oneResponse, firstName, lastName]);
 
   const hasName = firstName.trim().length > 0 && lastName.trim().length > 0;
-  const identified = event?.requireLogin ? Boolean(identity?.resident) : hasName;
+  const identified = event?.requireLogin
+    ? Boolean(identity?.resident)
+    : hasName;
   const canSubmit = useMemo(() => {
     if (!event) return false;
     if (!identified) return false;
@@ -144,7 +242,10 @@ export function PublicAttendance() {
       if (!event.requireLogin) {
         sessionStorage.setItem(
           `branner-name:${event.slug}`,
-          JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim() }),
+          JSON.stringify({
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+          }),
         );
       }
       const result = await api<{
@@ -166,9 +267,24 @@ export function PublicAttendance() {
       const who = result.resident
         ? `${result.resident.firstName} ${result.resident.lastName} · Room ${result.resident.room}`
         : result.guestName || `${firstName.trim()} ${lastName.trim()}`;
-      setDone(`You're checked in as ${who}.`);
+      rememberDone(
+        event.slug,
+        result.resident?.firstName ?? firstName.trim(),
+        result.resident?.lastName ?? lastName.trim(),
+        `You're checked in as ${who}.`,
+      );
     } catch (err) {
-      setError((err as Error).message);
+      const message = (err as Error).message;
+      if (/already checked in/i.test(message)) {
+        rememberDone(
+          event.slug,
+          firstName.trim(),
+          lastName.trim(),
+          message.endsWith(".") ? message : `${message}.`,
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -198,40 +314,57 @@ export function PublicAttendance() {
   });
 
   if (!event) {
-    return <div className="p-10 text-center text-stone-mute">{error || "Loading…"}</div>;
+    return (
+      <div className="p-10 text-center text-stone-mute">
+        {error || "Loading…"}
+      </div>
+    );
   }
 
   const next = `/a/${event.slug}`;
 
   return (
     <div className="min-h-screen bg-stone-sand">
-      <div className={`${bar.bg} px-4 py-3 text-center text-sm font-medium text-white`}>
+      <div
+        className={`${bar.bg} px-4 py-3 text-center text-sm font-medium text-white`}
+      >
         {bar.text}
         {loc === "denied" && event.locationTracking && (
-          <button type="button" className="ml-3 underline" onClick={() => setAsk(true)}>
+          <button
+            type="button"
+            className="ml-3 underline"
+            onClick={() => setAsk(true)}
+          >
             Try again
           </button>
         )}
       </div>
       <div className="mx-auto max-w-lg px-4 py-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cardinal">Branner</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cardinal">
+          Branner
+        </p>
         <h1 className="mt-1 font-display text-3xl">{event.title}</h1>
-        <p className="text-sm text-stone-mute">{event.eventType?.label ?? "House meeting"}</p>
+        <p className="text-sm text-stone-mute">
+          {event.eventType?.label ?? "House meeting"}
+        </p>
 
         {event.requireLogin && !identity?.resident && (
           <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
-            <p className="text-sm">Sign in with Stanford so we know who you are. You cannot pick a name.</p>
+            <p className="text-sm">
+              Sign in with Stanford so we know who you are. You cannot pick a
+              name.
+            </p>
             {googleEnabled ? (
               <a
-                href={`/api/auth/google?next=${encodeURIComponent(next)}`
-                }
+                href={`/api/auth/google?next=${encodeURIComponent(next)}`}
                 className="mt-4 block rounded-lg bg-cardinal py-2 text-center text-sm font-semibold text-white"
               >
                 Sign in with Stanford
               </a>
             ) : (
               <p className="mt-3 text-xs text-stone-mute">
-                Google OAuth is not configured on this server yet. Use your roster @stanford.edu email.
+                Google OAuth is not configured on this server yet. Use your
+                roster @stanford.edu email.
               </p>
             )}
             {allowDevLogin && (
@@ -260,16 +393,15 @@ export function PublicAttendance() {
 
         {event.requireLogin && identity?.resident && (
           <p className="mt-6 rounded-xl bg-white px-4 py-3 text-sm shadow-sm">
-            Checking in as <strong>{identity.name}</strong> · Room {identity.resident.room}
+            Checking in as <strong>{identity.name}</strong> · Room{" "}
+            {identity.resident.room}
           </p>
         )}
 
         {!event.requireLogin && (
           <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm font-medium">Write your name</p>
-            <p className="mt-1 text-xs text-stone-mute">
-              No Stanford login for this event. Type your first and last name so staff can mark you present.
-            </p>
+
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="block text-sm">
                 First name
@@ -296,7 +428,9 @@ export function PublicAttendance() {
         )}
 
         {done ? (
-          <p className="mt-8 rounded-2xl bg-emerald-50 p-6 text-center font-medium text-emerald-800">{done}</p>
+          <div className="mt-8 rounded-2xl bg-emerald-50 p-6 text-center">
+            <p className="font-medium text-emerald-800">{done}</p>
+          </div>
         ) : (
           <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
             <FormRenderer
@@ -316,7 +450,8 @@ export function PublicAttendance() {
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="font-display text-xl">Use your location?</h2>
             <p className="mt-2 text-sm text-stone-mute">
-              We need GPS to confirm you are at this event. You cannot type or edit a location.
+              We need GPS to confirm you are at this event. You cannot type or
+              edit a location.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -368,11 +503,16 @@ function statusBar({
   if (!event?.locationTracking) {
     return {
       bg: "bg-emerald-700",
-      text: requireLogin ? "You're signed in — you can submit" : "Name entered — you can submit",
+      text: requireLogin
+        ? "You're signed in — you can submit"
+        : "Name entered — you can submit",
     };
   }
   if (loc === "inside") {
-    return { bg: "bg-emerald-600", text: "You're in the right place — you can submit" };
+    return {
+      bg: "bg-emerald-600",
+      text: "You're in the right place — you can submit",
+    };
   }
   if (loc === "outside") {
     return {
@@ -381,7 +521,10 @@ function statusBar({
     };
   }
   if (loc === "locating") {
-    return { bg: "bg-amber-500", text: "Getting your location — you cannot submit yet" };
+    return {
+      bg: "bg-amber-500",
+      text: "Getting your location — you cannot submit yet",
+    };
   }
   if (loc === "denied") {
     return { bg: "bg-red-700", text: "Location blocked — you cannot submit" };

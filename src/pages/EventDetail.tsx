@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
-import { isRa, type AttendanceEvent, type FormSchema, type Resident } from "../lib/types";
+import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormSchema, type Resident } from "../lib/types";
 import { clsx, formatCheckIn, formatWhen, fullName, personSearchHay } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
@@ -31,6 +31,7 @@ export function EventDetail() {
     byHall: Record<string, { present: number; expected: number }>;
   } | null>(null);
   const [builder, setBuilder] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [peopleQ, setPeopleQ] = useState("");
   const [list, setList] = useState<"all" | "present" | "absent">("all");
 
@@ -59,6 +60,11 @@ export function EventDetail() {
     return `${window.location.origin}/a/${event.slug}`;
   }, [event]);
 
+  const rollup = useMemo(
+    () => deriveRollup(event, submissions, absent, analytics),
+    [event, submissions, absent, analytics],
+  );
+
   if (!event || !analytics) return <p className="text-stone-mute">Loading…</p>;
 
   const saveSchema = async (formSchema: FormSchema) => {
@@ -80,21 +86,33 @@ export function EventDetail() {
           <p className="text-stone-mute">
             {event.eventType?.label} · {formatWhen(event.startsAt)}
           </p>
+          {eventIsHouseMeeting(event) && (
+            <p className="mt-1 text-sm text-stone-mute">Expected and absent counts are residents only.</p>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={() => setBuilder(true)}
-          className="rounded-lg border border-black/10 bg-white px-4 py-2 text-sm"
-        >
-          Edit form
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setSettings(true)}
+            className="rounded-lg border border-black/10 bg-white px-4 py-2 text-sm"
+          >
+            Settings
+          </button>
+          <button
+            type="button"
+            onClick={() => setBuilder(true)}
+            className="rounded-lg border border-black/10 bg-white px-4 py-2 text-sm"
+          >
+            Edit form
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_220px]">
         <div className="grid grid-cols-3 gap-3">
-          <Stat label="Present" value={analytics.present} />
-          <Stat label="Expected" value={analytics.expected} />
-          <Stat label="Absent" value={analytics.absent} />
+          <Stat label="Present" value={rollup.present} />
+          <Stat label="Expected" value={rollup.expected} />
+          <Stat label="Absent" value={rollup.absent} />
         </div>
         <div className="rounded-2xl bg-white p-4 text-center shadow-sm">
           {shareUrl && <QRCodeSVG value={shareUrl} size={140} className="mx-auto" />}
@@ -121,7 +139,7 @@ export function EventDetail() {
       )}
 
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        {Object.entries(analytics.byHall).map(([hall, v]) => (
+        {Object.entries(rollup.byHall).map(([hall, v]) => (
           <div key={hall} className="rounded-2xl bg-white px-4 py-3 text-sm shadow-sm">
             <p className="font-medium">{hall}</p>
             <p className="text-stone-mute">
@@ -134,12 +152,23 @@ export function EventDetail() {
       <PeopleLists
         event={event}
         submissions={submissions}
-        absent={absent}
+        absent={rollup.missing}
         query={peopleQ}
         onQuery={setPeopleQ}
         list={list}
         onList={setList}
       />
+
+      {settings && (
+        <EventSettingsModal
+          event={event}
+          onClose={() => setSettings(false)}
+          onSaved={(next) => {
+            setEvent({ ...event, ...next });
+            setSettings(false);
+          }}
+        />
+      )}
 
       {builder && (
         <FormBuilderModal
@@ -395,6 +424,234 @@ function formatAnswers(schema: FormSchema, data: Record<string, unknown> | null 
       return `${field.label}: ${shown}`;
     })
     .filter((v): v is string => Boolean(v));
+}
+
+function deriveRollup(
+  event: AttendanceEvent | null,
+  submissions: SubmissionRow[],
+  absent: Resident[],
+  analytics: { present: number; expected: number; absent: number; byHall: Record<string, { present: number; expected: number }> } | null,
+) {
+  if (!event || !analytics) {
+    return { present: 0, expected: 0, absent: 0, byHall: {}, missing: absent };
+  }
+  const house = eventIsHouseMeeting(event);
+  const byId = new Map<string, Resident>();
+  for (const row of submissions) {
+    if (row.resident) byId.set(row.resident.id, row.resident);
+  }
+  for (const row of absent) byId.set(row.id, row);
+  const roster = [...byId.values()];
+  const expectedPeople = house ? roster.filter((r) => !isRa(r)) : roster;
+  const presentExpectedIds = new Set(
+    submissions
+      .filter((s) => s.resident && (!house || !isRa(s.resident)))
+      .map((s) => s.resident!.id),
+  );
+  const missing = expectedPeople.filter((r) => !presentExpectedIds.has(r.id));
+  const counted = house ? submissions.filter((s) => !isRa(s.resident)) : submissions;
+  const byHall: Record<string, { present: number; expected: number }> = {};
+  for (const r of expectedPeople) {
+    byHall[r.hall] ??= { present: 0, expected: 0 };
+    byHall[r.hall].expected += 1;
+    if (presentExpectedIds.has(r.id)) byHall[r.hall].present += 1;
+  }
+  return {
+    present: counted.length,
+    expected: expectedPeople.length,
+    absent: missing.length,
+    byHall,
+    missing,
+  };
+}
+
+function EventSettingsModal({
+  event,
+  onClose,
+  onSaved,
+}: {
+  event: AttendanceEvent;
+  onClose: () => void;
+  onSaved: (next: Partial<AttendanceEvent>) => void;
+}) {
+  const [types, setTypes] = useState<EventType[]>(event.eventType ? [event.eventType] : []);
+  const [eventTypeId, setEventTypeId] = useState(event.eventTypeId);
+  const [newType, setNewType] = useState("");
+  const [locationTracking, setLocationTracking] = useState(event.locationTracking);
+  const [oneResponse, setOneResponse] = useState(event.oneResponse !== false);
+  const [lat, setLat] = useState(event.lat ?? BRANNER_LAT);
+  const [lng, setLng] = useState(event.lng ?? BRANNER_LNG);
+  const [radiusMeters, setRadiusMeters] = useState(event.radiusMeters || 80);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api<{ types: EventType[] }>("/api/events/types")
+      .then((d) => {
+        const list = d.types;
+        if (event.eventType && !list.some((t) => t.id === event.eventType!.id)) {
+          list.unshift(event.eventType);
+        }
+        setTypes(list);
+      })
+      .catch(console.error);
+  }, [event.eventType]);
+
+  const selected = types.find((t) => t.id === eventTypeId) ?? event.eventType;
+  const houseMeeting = isHouseMeeting(selected);
+
+  const addType = async () => {
+    if (!newType.trim()) return;
+    const { type } = await api<{ type: EventType }>("/api/events/types", {
+      method: "POST",
+      body: JSON.stringify({ label: newType.trim() }),
+    });
+    setNewType("");
+    setTypes((prev) => (prev.some((t) => t.id === type.id) ? prev : [...prev, type]));
+    setEventTypeId(type.id);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    const payload = {
+      eventTypeId,
+      houseMeeting,
+      locationTracking,
+      oneResponse,
+      lat: locationTracking ? lat : null,
+      lng: locationTracking ? lng : null,
+      radiusMeters: locationTracking ? radiusMeters : event.radiusMeters,
+    };
+    try {
+      let next: AttendanceEvent;
+      try {
+        const data = await api<{ event: AttendanceEvent }>(`/api/events/${event.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        next = data.event;
+      } catch {
+        const data = await api<{ event: AttendanceEvent }>(`/api/events/${event.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            eventTypeId,
+            locationTracking,
+            lat: payload.lat,
+            lng: payload.lng,
+            radiusMeters: payload.radiusMeters,
+          }),
+        });
+        next = data.event;
+      }
+      onSaved({
+        eventTypeId: next.eventTypeId,
+        eventType: next.eventType ?? selected,
+        houseMeeting: next.houseMeeting ?? houseMeeting,
+        locationTracking: next.locationTracking,
+        oneResponse: next.oneResponse ?? oneResponse,
+        lat: next.lat,
+        lng: next.lng,
+        radiusMeters: next.radiusMeters,
+      });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-4">
+      <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-2xl bg-white p-6 shadow-xl">
+        <h2 className="font-display text-2xl">Event settings</h2>
+        <label className="mt-5 block text-sm font-medium">Type</label>
+        <select
+          className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
+          value={eventTypeId}
+          onChange={(e) => setEventTypeId(e.target.value)}
+        >
+          {types.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <div className="mt-2 flex gap-2">
+          <input
+            className="flex-1 rounded-lg border border-black/10 px-3 py-2 text-sm"
+            placeholder="Add a new type…"
+            value={newType}
+            onChange={(e) => setNewType(e.target.value)}
+          />
+          <button type="button" onClick={() => void addType()} className="rounded-lg border border-black/10 px-3 text-sm">
+            Add
+          </button>
+        </div>
+        {houseMeeting && (
+          <p className="mt-2 text-xs text-stone-mute">
+            House meetings exclude RAs from expected / absent. They can still check in.
+          </p>
+        )}
+        <label className="mt-4 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={oneResponse}
+            onChange={(e) => setOneResponse(e.target.checked)}
+          />
+          <span>
+            One response per person
+            <span className="block text-xs text-stone-mute">
+              After someone checks in, they cannot submit again.
+            </span>
+          </span>
+        </label>
+        <label className="mt-4 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={locationTracking}
+            onChange={(e) => setLocationTracking(e.target.checked)}
+          />
+          <span>
+            Location tracking
+            <span className="block text-xs text-stone-mute">
+              Respondents must be inside the check-in area to submit.
+            </span>
+          </span>
+        </label>
+        {locationTracking && (
+          <div className="mt-3">
+            <EventLocationMap
+              lat={lat}
+              lng={lng}
+              radiusMeters={radiusMeters}
+              onChange={(nextLat, nextLng) => {
+                setLat(nextLat);
+                setLng(nextLng);
+              }}
+              onRadiusChange={setRadiusMeters}
+            />
+          </div>
+        )}
+        {error && <p className="mt-3 text-sm text-cardinal">{error}</p>}
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-sm">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving}
+            className="rounded-lg bg-cardinal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save settings"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

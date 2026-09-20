@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../prisma.js";
 import { currentIdentity } from "../auth.js";
 import { haversineMeters } from "../geo.js";
-import { matchResidentByName, normName } from "../names.js";
+import { matchResidentByName, namesOverlap, personNameKeys } from "../names.js";
 
 export const publicRouter = Router();
 
@@ -16,9 +16,27 @@ publicRouter.get("/events/:slug", async (req, res) => {
     return;
   }
   const identity = currentIdentity(req);
-  const resident = identity
+  const firstName = String(req.query.firstName ?? "").trim();
+  const lastName = String(req.query.lastName ?? "").trim();
+  const signedInResident = identity
     ? await prisma.resident.findUnique({ where: { email: identity.email } })
     : null;
+  const namedResident = event.requireLogin
+    ? null
+    : await resolveResident({
+        requireLogin: false,
+        identity: null,
+        firstName,
+        lastName,
+      });
+  const existing =
+    event.oneResponse !== false
+      ? await findExistingCheckIn(
+          event.id,
+          event.requireLogin ? signedInResident : namedResident,
+          `${firstName} ${lastName}`.trim(),
+        )
+      : null;
   res.json({
     event: {
       id: event.id,
@@ -28,29 +46,37 @@ publicRouter.get("/events/:slug", async (req, res) => {
       endsAt: event.endsAt,
       requireLogin: event.requireLogin,
       locationTracking: event.locationTracking,
+      houseMeeting: event.houseMeeting,
+      oneResponse: event.oneResponse !== false,
       lat: event.lat,
       lng: event.lng,
       radiusMeters: event.radiusMeters,
       formSchema: JSON.parse(event.formSchema),
       eventType: event.eventType,
     },
-    identity: resident
+    identity: signedInResident
       ? {
-          email: resident.email,
-          name: `${resident.firstName} ${resident.lastName}`,
+          email: signedInResident.email,
+          name: `${signedInResident.firstName} ${signedInResident.lastName}`,
           resident: {
-            id: resident.id,
-            firstName: resident.firstName,
-            lastName: resident.lastName,
-            room: resident.room,
-            hall: resident.hall,
-            photoPath: resident.photoPath,
-            type: resident.type,
+            id: signedInResident.id,
+            firstName: signedInResident.firstName,
+            lastName: signedInResident.lastName,
+            room: signedInResident.room,
+            hall: signedInResident.hall,
+            photoPath: signedInResident.photoPath,
+            type: signedInResident.type,
           },
         }
       : identity
         ? { email: identity.email, name: identity.name, resident: null }
         : null,
+    alreadySubmitted: Boolean(existing),
+    alreadyAs: existing
+      ? existing.resident
+        ? `${existing.resident.firstName} ${existing.resident.lastName}`
+        : existing.guestName
+      : null,
     googleEnabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     allowDevLogin: process.env.ALLOW_DEV_LOGIN === "1" || !process.env.GOOGLE_CLIENT_ID,
   });
@@ -68,31 +94,26 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
   const lastName = String(req.body?.lastName ?? "").trim();
   const guestName = `${firstName} ${lastName}`.trim();
 
-  let resident = identity
-    ? await prisma.resident.findUnique({ where: { email: identity.email } })
-    : null;
-
   if (event.requireLogin) {
     if (!identity) {
       res.status(401).json({ error: "Sign in with Stanford to check in" });
       return;
     }
-    if (!resident) {
-      res.status(403).json({ error: "Your Stanford email is not on the Branner roster" });
-      return;
-    }
-  } else {
-    if (!guestName) {
-      res.status(400).json({ error: "Enter your first and last name" });
-      return;
-    }
-    const roster = await prisma.resident.findMany({
-      select: { id: true, firstName: true, lastName: true, legalName: true },
-    });
-    const matched = matchResidentByName(firstName, lastName, roster);
-    resident = matched
-      ? await prisma.resident.findUnique({ where: { id: matched.id } })
-      : null;
+  } else if (!guestName) {
+    res.status(400).json({ error: "Enter your first and last name" });
+    return;
+  }
+
+  const resident = await resolveResident({
+    requireLogin: event.requireLogin,
+    identity,
+    firstName,
+    lastName,
+  });
+
+  if (event.requireLogin && !resident) {
+    res.status(403).json({ error: "Your Stanford email is not on the Branner roster" });
+    return;
   }
 
   let distanceM: number | null = null;
@@ -134,6 +155,24 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     guestName: resident ? null : guestName || null,
   };
 
+  const oneResponse = event.oneResponse !== false;
+  if (oneResponse) {
+    const existing = await findExistingCheckIn(event.id, resident, guestName);
+    if (existing) {
+      const who = existing.resident
+        ? `${existing.resident.firstName} ${existing.resident.lastName}`
+        : existing.guestName;
+      res.status(409).json({
+        error: who
+          ? `${who} already checked in for this event`
+          : "You already checked in for this event",
+        alreadySubmitted: true,
+        alreadyAs: who,
+      });
+      return;
+    }
+  }
+
   const submission = resident
     ? await prisma.submission.upsert({
         where: { eventId_residentId: { eventId: event.id, residentId: resident.id } },
@@ -163,6 +202,68 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
   });
 });
 
+async function resolveResident({
+  requireLogin,
+  identity,
+  firstName,
+  lastName,
+}: {
+  requireLogin: boolean;
+  identity: { email: string } | null;
+  firstName: string;
+  lastName: string;
+}) {
+  if (requireLogin) {
+    if (!identity) return null;
+    return prisma.resident.findUnique({ where: { email: identity.email } });
+  }
+  if (!firstName && !lastName) return null;
+  const roster = await prisma.resident.findMany({
+    select: { id: true, firstName: true, lastName: true, legalName: true },
+  });
+  const matched = matchResidentByName(firstName, lastName, roster);
+  return matched ? prisma.resident.findUnique({ where: { id: matched.id } }) : null;
+}
+
+async function findExistingCheckIn(
+  eventId: string,
+  resident: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    legalName: string | null;
+  } | null,
+  guestName: string,
+) {
+  const wanted = personNameKeys({
+    firstName: resident?.firstName,
+    lastName: resident?.lastName,
+    legalName: resident?.legalName,
+    guestName,
+  });
+  if (!resident && !wanted.length) return null;
+  const rows = await prisma.submission.findMany({
+    where: { eventId },
+    include: {
+      resident: { select: { id: true, firstName: true, lastName: true, legalName: true } },
+    },
+  });
+  return (
+    rows.find((row) => {
+      if (resident && row.residentId === resident.id) return true;
+      return namesOverlap(
+        wanted,
+        personNameKeys({
+          firstName: row.resident?.firstName,
+          lastName: row.resident?.lastName,
+          legalName: row.resident?.legalName,
+          guestName: row.guestName,
+        }),
+      );
+    }) ?? null
+  );
+}
+
 async function upsertGuestSubmission(
   eventId: string,
   guestName: string,
@@ -176,10 +277,7 @@ async function upsertGuestSubmission(
     guestName: string | null;
   },
 ) {
-  const existing = await prisma.submission.findMany({
-    where: { eventId, residentId: null },
-  });
-  const prior = existing.find((row) => normName(row.guestName ?? "") === normName(guestName));
+  const prior = await findExistingCheckIn(eventId, null, guestName);
   if (prior) {
     return prisma.submission.update({
       where: { id: prior.id },

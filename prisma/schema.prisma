@@ -60,6 +60,8 @@ model Event {
   endsAt           DateTime?
   requireLogin     Boolean   @default(false)
   locationTracking Boolean   @default(true)
+  houseMeeting     Boolean?
+  oneResponse      Boolean   @default(true)
   lat              Float?
   lng              Float?
   radiusMeters     Int       @default(80)

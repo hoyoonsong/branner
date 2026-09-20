@@ -33,6 +33,26 @@ export type NameResident = {
   legalName: string | null;
 };
 
+export function personNameKeys(person: {
+  firstName?: string | null;
+  lastName?: string | null;
+  legalName?: string | null;
+  guestName?: string | null;
+}): string[] {
+  const keys = new Set<string>();
+  const preferred = normName(`${person.firstName ?? ""} ${person.lastName ?? ""}`);
+  if (preferred) keys.add(preferred);
+  if (person.legalName) keys.add(normName(person.legalName));
+  if (person.guestName) keys.add(normName(person.guestName));
+  return [...keys];
+}
+
+export function namesOverlap(a: string[], b: string[]): boolean {
+  if (!a.length || !b.length) return false;
+  const set = new Set(a);
+  return b.some((n) => set.has(n));
+}
+
 export function matchResidentByName<T extends NameResident>(
   firstName: string,
   lastName: string,
