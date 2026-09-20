@@ -9,6 +9,7 @@ import { residentsRouter } from "./routes/residents.js";
 import { eventsRouter } from "./routes/events.js";
 import { publicRouter } from "./routes/public.js";
 import { geoRouter } from "./routes/geo.js";
+import { importRouter } from "./routes/import.js";
 import { ensureSeed } from "./ensure-seed.js";
 import { googleCallbackUrl, publicOrigin, uploadsDir } from "./runtime.js";
 
@@ -16,12 +17,29 @@ const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
 
 app.set("trust proxy", 1);
+app.use((req, res, next) => {
+  const origin = req.get("x-branner-origin") || "";
+  if (!/^http:\/\/localhost:\d+$/.test(origin)) {
+    next();
+    return;
+  }
+  const original = res.setHeader.bind(res);
+  res.setHeader = ((name: string, value: string | number | readonly string[]) => {
+    if (String(name).toLowerCase() === "set-cookie") {
+      const list = Array.isArray(value) ? value : [String(value)];
+      value = list.map((cookie) => String(cookie).replace(/;\s*Secure/gi, ""));
+    }
+    return original(name, value);
+  }) as typeof res.setHeader;
+  next();
+});
 app.use(
   cors({
     origin: true,
     credentials: true,
   }),
 );
+app.use("/api/import", express.json({ limit: "25mb" }), importRouter);
 app.use(express.json({ limit: "2mb" }));
 
 configureAuth(app);

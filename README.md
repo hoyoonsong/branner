@@ -16,7 +16,9 @@ npm run import:roster
 npm run dev
 ```
 
-Open http://localhost:5174. Until Google OAuth is filled in, `ALLOW_DEV_LOGIN=1` lets you request access with a `@stanford.edu` email.
+`npm run dev` opens http://localhost:5174 against the **production** Railway API (same residents, events, and login as https://branner.hoyoonsong.com). Use `npm run dev:local` only if you want a separate local SQLite server.
+
+Until Google OAuth is filled in, `ALLOW_DEV_LOGIN=1` on a local server lets you request access with a `@stanford.edu` email.
 
 ## Railway + Stanford Google
 

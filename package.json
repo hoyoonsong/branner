@@ -7,7 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite\"",
+    "dev": "vite",
+    "dev:local": "DEV_API=local concurrently -k \"tsx watch server/index.ts\" \"vite\"",
+    "sync:prod": "tsx server/scripts/push-roster-to-prod.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "node dist-server/index.js",
     "start:railway": "sh scripts/railway-start.sh",

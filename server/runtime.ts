@@ -26,7 +26,26 @@ export function publicOrigin(): string {
   return "";
 }
 
-export function googleCallbackUrl(): string {
+export function allowedOrigins(): string[] {
+  return [
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    publicOrigin(),
+    process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "",
+  ].filter(Boolean);
+}
+
+export function requestOrigin(req: { get(name: string): string | undefined }): string {
+  const hinted = (req.get("x-branner-origin") || "").replace(/\/$/, "");
+  if (hinted && allowedOrigins().includes(hinted)) return hinted;
+  return publicOrigin();
+}
+
+export function googleCallbackUrl(req?: { get(name: string): string | undefined }): string {
+  if (req) {
+    const origin = requestOrigin(req);
+    if (origin) return `${origin}/api/auth/google/callback`;
+  }
   if (process.env.GOOGLE_CALLBACK_URL) return process.env.GOOGLE_CALLBACK_URL;
   const origin = publicOrigin();
   return origin ? `${origin}/api/auth/google/callback` : "/api/auth/google/callback";

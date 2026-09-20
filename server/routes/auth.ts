@@ -10,6 +10,7 @@ import {
   seedAdminEmails,
 } from "../auth.js";
 import { prisma } from "../prisma.js";
+import { googleCallbackUrl } from "../runtime.js";
 
 export const authRouter = Router();
 
@@ -55,13 +56,16 @@ authRouter.get("/google", (req, res, next) => {
     hd: "stanford.edu",
     prompt: "select_account",
     state: nextPath || "admin",
+    callbackURL: googleCallbackUrl(req),
   })(req, res, next);
 });
 
-authRouter.get(
-  "/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login?error=stanford" }),
-  (req, res) => {
+authRouter.get("/google/callback", (req, res, next) => {
+  passport.authenticate("google", {
+    failureRedirect: "/login?error=stanford",
+    callbackURL: googleCallbackUrl(req),
+  })(req, res, next);
+}, (req, res) => {
     const next = safeNext(req.query.state);
     if (next) {
       res.redirect(next);
@@ -77,8 +81,7 @@ authRouter.get(
       return;
     }
     res.redirect("/");
-  },
-);
+});
 
 authRouter.post("/dev-login", async (req, res) => {
   const allowed = process.env.ALLOW_DEV_LOGIN === "1" || !process.env.GOOGLE_CLIENT_ID;
