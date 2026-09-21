@@ -3,6 +3,7 @@ import { prisma } from "../prisma.js";
 import { currentIdentity } from "../auth.js";
 import { haversineMeters } from "../geo.js";
 import { matchResidentByName, namesOverlap, personNameKeys } from "../names.js";
+import { attendanceStatus, formWasSubmitted, lateAtOf, parseResponseData } from "../attendance.js";
 
 export const publicRouter = Router();
 
@@ -71,13 +72,15 @@ publicRouter.get("/events/:slug", async (req, res) => {
       : identity
         ? { email: identity.email, name: identity.name, resident: null }
         : null,
-    alreadySubmitted: Boolean(existing),
+    alreadySubmitted: Boolean(existing && formWasSubmitted(existing.responseData)),
     alreadyAs: existing
       ? `${firstName} ${lastName}`.trim() ||
         (existing.resident
           ? `${existing.resident.firstName} ${existing.resident.lastName}`
           : existing.guestName)
       : null,
+    markedLate: existing ? attendanceStatus(existing) === "late" : false,
+    lateAt: existing ? lateAtOf(existing.responseData) : null,
     googleEnabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     allowDevLogin: process.env.ALLOW_DEV_LOGIN === "1" || !process.env.GOOGLE_CLIENT_ID,
   });
@@ -146,51 +149,83 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     }
   }
 
+  const existing = await findExistingCheckIn(event.id, resident, guestName);
+  const priorData = parseResponseData(existing?.responseData);
+  const priorStatus = existing ? attendanceStatus(existing) : "present";
+  const alreadyFilled = existing ? formWasSubmitted(priorData) : false;
+  const oneResponse = event.oneResponse !== false;
+
+  if (oneResponse && alreadyFilled) {
+    const who = guestName ||
+      (existing?.resident
+        ? `${existing.resident.firstName} ${existing.resident.lastName}`
+        : existing?.guestName);
+    res.status(409).json({
+      error: who
+        ? `${who} already checked in for this event`
+        : "You already checked in for this event",
+      alreadySubmitted: true,
+      alreadyAs: who,
+      markedLate: priorStatus === "late",
+      lateAt: lateAtOf(priorData),
+    });
+    return;
+  }
+
+  const nextStatus = priorStatus === "late" ? "late" : "present";
+  const nextData = {
+    ...priorData,
+    ...(answers && typeof answers === "object" ? answers : {}),
+    formSubmitted: true,
+  };
+  if (nextStatus === "late") {
+    nextData.late = true;
+    if (priorData.lateAt) nextData.lateAt = priorData.lateAt;
+  } else {
+    delete nextData.late;
+    delete nextData.lateAt;
+    delete nextData.excused;
+    delete nextData.excusedAt;
+    delete nextData.excusedNote;
+  }
+
   const payload = {
-    responseData: JSON.stringify(answers),
+    responseData: JSON.stringify(nextData),
     lat,
     lng,
     accuracy,
     distanceM,
-    status: "present",
-    guestName: resident ? null : guestName || null,
+    status: nextStatus,
+    guestName: resident ? existing?.guestName ?? null : guestName || null,
   };
 
-  const oneResponse = event.oneResponse !== false;
-  if (oneResponse) {
-    const existing = await findExistingCheckIn(event.id, resident, guestName);
-    if (existing) {
-      const who = guestName ||
-        (existing.resident
-          ? `${existing.resident.firstName} ${existing.resident.lastName}`
-          : existing.guestName);
-      res.status(409).json({
-        error: who
-          ? `${who} already checked in for this event`
-          : "You already checked in for this event",
-        alreadySubmitted: true,
-        alreadyAs: who,
-      });
-      return;
-    }
-  }
-
-  const submission = resident
-    ? await prisma.submission.upsert({
-        where: { eventId_residentId: { eventId: event.id, residentId: resident.id } },
-        create: {
-          eventId: event.id,
-          residentId: resident.id,
-          ...payload,
-        },
-        update: payload,
+  const submission = existing
+    ? await prisma.submission.update({
+        where: { id: existing.id },
+        data: payload,
       })
-    : await upsertGuestSubmission(event.id, guestName, payload);
+    : resident
+      ? await prisma.submission.create({
+          data: {
+            eventId: event.id,
+            residentId: resident.id,
+            ...payload,
+          },
+        })
+      : await prisma.submission.create({
+          data: {
+            eventId: event.id,
+            residentId: null,
+            ...payload,
+          },
+        });
 
   res.json({
     ok: true,
     submissionId: submission.id,
     distanceM,
+    late: nextStatus === "late",
+    lateAt: lateAtOf(nextData),
     resident: resident
       ? {
           id: resident.id,

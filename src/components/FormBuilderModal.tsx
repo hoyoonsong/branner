@@ -84,6 +84,7 @@ export function FormBuilderModal({
   saving = false,
   onSave,
   onMetaChange,
+  onDeleteSubmission,
 }: {
   schema: FormSchema;
   onChange: (schema: FormSchema) => void;
@@ -97,6 +98,7 @@ export function FormBuilderModal({
   saving?: boolean;
   onSave?: (schema: FormSchema) => void | Promise<void>;
   onMetaChange?: (meta: DetailsDraft) => void | Promise<void>;
+  onDeleteSubmission?: (submission: BuilderSubmission) => void;
 }) {
   const [meta, setMeta] = useState<DetailsDraft>({ title, description, requireLogin });
   const [tab, setTab] = useState<BuilderTab>("questions");
@@ -519,9 +521,20 @@ export function FormBuilderModal({
                       {s.resident ? `${s.resident.room} · ${s.resident.hall}` : "Name written at check-in"}
                     </p>
                   </div>
-                  <span className="text-xs text-slate-500">
-                    {new Date(s.createdAt).toLocaleString()}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-500">
+                      {new Date(s.createdAt).toLocaleString()}
+                    </span>
+                    {onDeleteSubmission && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteSubmission(s)}
+                        className="rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
               {submissions.length === 0 && (

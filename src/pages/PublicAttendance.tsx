@@ -48,6 +48,7 @@ export function PublicAttendance() {
   const [distance, setDistance] = useState<number | null>(null);
   const [ask, setAsk] = useState(false);
   const [done, setDone] = useState("");
+  const [lateNotice, setLateNotice] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [devEmail, setDevEmail] = useState("");
@@ -81,6 +82,8 @@ export function PublicAttendance() {
       identity: Identity | null;
       alreadySubmitted?: boolean;
       alreadyAs?: string | null;
+      markedLate?: boolean;
+      lateAt?: string | null;
       googleEnabled: boolean;
       allowDevLogin: boolean;
     }>(`/api/public/events/${slug}${suffix}`);
@@ -110,6 +113,13 @@ export function PublicAttendance() {
     setEvent(nextEvent);
     setIdentity(data.identity);
     setAllowDevLogin(data.allowDevLogin);
+    if (data.markedLate && !data.alreadySubmitted) {
+      setLateNotice(
+        "You were marked as arriving late. You can still submit, but this will not count as being here for the whole house meeting.",
+      );
+    } else {
+      setLateNotice("");
+    }
     if (data.alreadySubmitted) {
       const who =
         data.alreadyAs ||
@@ -120,7 +130,9 @@ export function PublicAttendance() {
         nextEvent.slug,
         data.identity?.resident?.firstName ?? first,
         data.identity?.resident?.lastName ?? last,
-        `${who} already checked in.`,
+        data.markedLate
+          ? `${who} already checked in. You were not here for the whole house meeting.`
+          : `${who} already checked in.`,
       );
     } else {
       try {
@@ -263,6 +275,7 @@ export function PublicAttendance() {
       const result = await api<{
         resident: { firstName: string; lastName: string; room: string } | null;
         guestName: string | null;
+        late?: boolean;
       }>(`/api/public/events/${event.slug}/submit`, {
         method: "POST",
         body: JSON.stringify({
@@ -285,7 +298,9 @@ export function PublicAttendance() {
         event.slug,
         firstName.trim(),
         lastName.trim(),
-        `You're checked in as ${who}.`,
+        result.late
+          ? `You're checked in as ${who}. You were not here for the whole house meeting.`
+          : `You're checked in as ${who}.`,
       );
     } catch (err) {
       const message = (err as Error).message;
@@ -441,9 +456,15 @@ export function PublicAttendance() {
           </div>
         )}
 
+        {lateNotice && !done && (
+          <div className="mt-6 rounded-2xl bg-amber-50 p-4 text-sm text-amber-950">
+            {lateNotice}
+          </div>
+        )}
+
         {done ? (
-          <div className="mt-8 rounded-2xl bg-emerald-50 p-6 text-center">
-            <p className="font-medium text-emerald-800">{done}</p>
+          <div className={`mt-8 rounded-2xl p-6 text-center ${/whole house meeting/i.test(done) ? "bg-amber-50" : "bg-emerald-50"}`}>
+            <p className={`font-medium ${/whole house meeting/i.test(done) ? "text-amber-950" : "text-emerald-800"}`}>{done}</p>
           </div>
         ) : (
           <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">

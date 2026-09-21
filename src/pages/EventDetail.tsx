@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
 import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormSchema, type Resident } from "../lib/types";
-import { clsx, formatCheckIn, formatWhen, fullName, personSearchHay } from "../lib/utils";
+import { attendanceStatus, excusedNoteOf, lateAtOf, type AttendanceStatus } from "../lib/attendance";
+import { clsx, downloadTextFile, fileSlug, formatCheckIn, formatWhen, fullName, personSearchHay, toCsv } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
 import { BRANNER_LAT, BRANNER_LNG } from "../lib/geo";
@@ -13,12 +14,15 @@ type SubmissionRow = {
   id: string;
   createdAt: string;
   residentId?: string | null;
+  status?: string | null;
   distanceM: number | null;
   accuracy: number | null;
   guestName: string | null;
   responseData: Record<string, unknown>;
   resident: Resident | null;
 };
+
+type PeopleFilter = "all" | "present" | "late" | "excused" | "absent";
 
 export function EventDetail() {
   const { id } = useParams();
@@ -27,14 +31,16 @@ export function EventDetail() {
   const [absent, setAbsent] = useState<Resident[]>([]);
   const [analytics, setAnalytics] = useState<{
     present: number;
+    late?: number;
+    excused?: number;
     expected: number;
     absent: number;
-    byHall: Record<string, { present: number; expected: number }>;
+    byHall: Record<string, { present: number; late?: number; excused?: number; expected: number }>;
   } | null>(null);
   const [builder, setBuilder] = useState(false);
   const [settings, setSettings] = useState(false);
   const [peopleQ, setPeopleQ] = useState("");
-  const [list, setList] = useState<"all" | "present" | "absent">("all");
+  const [list, setList] = useState<PeopleFilter>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [peopleError, setPeopleError] = useState("");
 
@@ -113,17 +119,58 @@ export function EventDetail() {
     }
   };
 
-  const removeCheckIn = async (submissionId: string) => {
+  const setAttendance = async (
+    target: { resident?: Resident; submission?: SubmissionRow },
+    status: AttendanceStatus,
+  ) => {
+    const resident = target.resident ?? target.submission?.resident ?? undefined;
+    const submission = target.submission;
+    const id = resident?.id ?? submission?.id;
+    if (!id) return;
+    let note = "";
+    if (status === "excused") {
+      const entered = window.prompt("Optional note for this excused absence", "");
+      if (entered === null) return;
+      note = entered.trim();
+    }
     setPeopleError("");
-    setBusyId(submissionId);
+    setBusyId(id);
     try {
-      await api(`/api/events/${event.id}/unmark`, {
+      await api(`/api/events/${event.id}/set-status`, {
         method: "POST",
-        body: JSON.stringify({ submissionId }),
+        body: JSON.stringify({
+          status,
+          residentId: resident?.id,
+          submissionId: submission?.id,
+          note,
+        }),
       });
       await load();
     } catch (err) {
-      setPeopleError(err instanceof Error ? err.message : "Could not remove check-in");
+      setPeopleError(err instanceof Error ? err.message : "Could not update attendance");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeCheckIn = async (submission: SubmissionRow) => {
+    const label = submission.resident
+      ? fullName(submission.resident)
+      : submission.guestName || "this response";
+    if (!window.confirm(`Delete ${label}'s check-in? This cannot be undone.`)) return;
+    setPeopleError("");
+    setBusyId(submission.id);
+    const previous = submissions;
+    setSubmissions((rows) => rows.filter((row) => row.id !== submission.id));
+    try {
+      await api(`/api/events/${event.id}/unmark`, {
+        method: "POST",
+        body: JSON.stringify({ submissionId: submission.id }),
+      });
+      await load();
+    } catch (err) {
+      setSubmissions(previous);
+      setPeopleError(err instanceof Error ? err.message : "Could not delete response");
     } finally {
       setBusyId(null);
     }
@@ -141,7 +188,9 @@ export function EventDetail() {
             {event.eventType?.label} · {formatWhen(event.startsAt)}
           </p>
           {eventIsHouseMeeting(event) && (
-            <p className="mt-1 text-sm text-stone-mute">Expected and absent counts are residents only.</p>
+            <p className="mt-1 text-sm text-stone-mute">
+              RAs are not expected and do not appear under Not here. If they check in, they still show as present.
+            </p>
           )}
         </div>
         <div className="flex gap-2">
@@ -163,10 +212,12 @@ export function EventDetail() {
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_220px]">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <Stat label="Present" value={rollup.present} />
-          <Stat label="Expected" value={rollup.expected} />
+          <Stat label="Late" value={rollup.late} />
+          <Stat label="Excused" value={rollup.excused} />
           <Stat label="Absent" value={rollup.absent} />
+          <Stat label="Expected" value={rollup.expected} />
         </div>
         <div className="rounded-2xl bg-white p-4 text-center shadow-sm">
           {shareUrl && <QRCodeSVG value={shareUrl} size={140} className="mx-auto" />}
@@ -197,7 +248,10 @@ export function EventDetail() {
           <div key={hall} className="rounded-2xl bg-white px-4 py-3 text-sm shadow-sm">
             <p className="font-medium">{hall}</p>
             <p className="text-stone-mute">
-              {v.present} / {v.expected}
+              {v.present + (v.late ?? 0)} here
+              {(v.late ?? 0) > 0 ? ` · ${v.late} late` : ""}
+              {(v.excused ?? 0) > 0 ? ` · ${v.excused} excused` : ""}
+              {` / ${v.expected}`}
             </p>
           </div>
         ))}
@@ -206,7 +260,7 @@ export function EventDetail() {
       <PeopleLists
         event={event}
         submissions={submissions}
-        absent={rollup.notHere}
+        absent={rollup.missing}
         query={peopleQ}
         onQuery={setPeopleQ}
         list={list}
@@ -214,6 +268,7 @@ export function EventDetail() {
         busyId={busyId}
         error={peopleError}
         onMarkPresent={markPresent}
+        onSetStatus={setAttendance}
         onRemove={removeCheckIn}
       />
 
@@ -236,6 +291,7 @@ export function EventDetail() {
           shareUrl={shareUrl}
           status="published"
           submissions={submissions}
+          onDeleteSubmission={removeCheckIn}
           onChange={(schema) => setEvent({ ...event, formSchema: schema })}
           onSave={saveSchema}
           onMetaChange={async (meta) => {
@@ -255,6 +311,22 @@ export function EventDetail() {
   );
 }
 
+function matchesPerson(q: string, s: SubmissionRow) {
+  return personSearchHay([
+    s.guestName,
+    s.resident?.firstName,
+    s.resident?.lastName,
+    s.resident?.legalName,
+    s.resident?.email,
+    s.resident?.room,
+    s.resident?.bedSlot,
+    s.resident?.hall,
+    s.resident?.phone,
+    s.resident?.type,
+    JSON.stringify(s.responseData ?? {}),
+  ]).includes(q);
+}
+
 function PeopleLists({
   event,
   submissions,
@@ -266,6 +338,7 @@ function PeopleLists({
   busyId,
   error,
   onMarkPresent,
+  onSetStatus,
   onRemove,
 }: {
   event: AttendanceEvent;
@@ -273,34 +346,35 @@ function PeopleLists({
   absent: Resident[];
   query: string;
   onQuery: (q: string) => void;
-  list: "all" | "present" | "absent";
-  onList: (v: "all" | "present" | "absent") => void;
+  list: PeopleFilter;
+  onList: (v: PeopleFilter) => void;
   busyId: string | null;
   error: string;
   onMarkPresent: (resident: Resident) => void;
-  onRemove: (submissionId: string) => void;
+  onSetStatus: (
+    target: { resident?: Resident; submission?: SubmissionRow },
+    status: AttendanceStatus,
+  ) => void;
+  onRemove: (submission: SubmissionRow) => void;
 }) {
   const q = personSearchHay([query]);
   const present = useMemo(() => {
-    const rows = [...submissions].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
-    if (!q) return rows;
-    return rows.filter((s) =>
-      personSearchHay([
-        s.guestName,
-        s.resident?.firstName,
-        s.resident?.lastName,
-        s.resident?.legalName,
-        s.resident?.email,
-        s.resident?.room,
-        s.resident?.bedSlot,
-        s.resident?.hall,
-        s.resident?.phone,
-        s.resident?.type,
-        JSON.stringify(s.responseData ?? {}),
-      ]).includes(q),
-    );
+    const rows = submissions
+      .filter((s) => attendanceStatus(s) === "present")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return q ? rows.filter((s) => matchesPerson(q, s)) : rows;
+  }, [submissions, q]);
+  const late = useMemo(() => {
+    const rows = submissions
+      .filter((s) => attendanceStatus(s) === "late")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return q ? rows.filter((s) => matchesPerson(q, s)) : rows;
+  }, [submissions, q]);
+  const excused = useMemo(() => {
+    const rows = submissions
+      .filter((s) => attendanceStatus(s) === "excused")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return q ? rows.filter((s) => matchesPerson(q, s)) : rows;
   }, [submissions, q]);
   const missing = useMemo(() => {
     const rows = [...absent].sort((a, b) => Number(isRa(b)) - Number(isRa(a)));
@@ -321,28 +395,41 @@ function PeopleLists({
     );
   }, [absent, q]);
 
+  const exportLabel =
+    list === "present"
+      ? "Export present CSV"
+      : list === "late"
+        ? "Export late CSV"
+        : list === "excused"
+          ? "Export excused CSV"
+          : list === "absent"
+            ? "Export not-here CSV"
+            : "Export all CSV";
+
   return (
     <div className="mt-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-xl">Who is here</h2>
           <p className="text-sm text-stone-mute">
-            Search names, rooms, halls, emails, or form answers. Mark someone present if they are here
-            but did not check in.
+            Mark late or excused from either list. Late people can still submit the form. Export uses
+            the current filter and search.
           </p>
         </div>
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search present or not here…"
+          placeholder="Search people…"
           className="w-full max-w-sm rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
         />
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {(
           [
-            ["all", `All (${present.length + missing.length})`],
+            ["all", `All (${present.length + late.length + excused.length + missing.length})`],
             ["present", `Present (${present.length})`],
+            ["late", `Late (${late.length})`],
+            ["excused", `Excused (${excused.length})`],
             ["absent", `Not here (${missing.length})`],
           ] as const
         ).map(([key, label]) => (
@@ -358,6 +445,13 @@ function PeopleLists({
             {label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => exportAttendanceCsv(event, { present, late, excused, missing }, list)}
+          className="ml-auto rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm font-medium"
+        >
+          {exportLabel}
+        </button>
       </div>
 
       {error && <p className="mt-3 text-sm text-cardinal">{error}</p>}
@@ -371,13 +465,60 @@ function PeopleLists({
                 key={s.id}
                 submission={s}
                 schema={event.formSchema}
-                busy={busyId === s.id}
-                onRemove={() => onRemove(s.id)}
+                busy={busyId === s.id || busyId === s.resident?.id}
+                onMarkLate={s.resident ? () => onSetStatus({ submission: s, resident: s.resident! }, "late") : undefined}
+                onRemove={() => onRemove(s)}
               />
             ))}
             {present.length === 0 && (
               <p className="p-4 text-sm text-stone-mute">
                 {q ? "No matching check-ins." : "No check-ins yet."}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {(list === "all" || list === "late") && (
+        <section className="mt-8">
+          <h3 className="font-display text-lg">Arrived late</h3>
+          <div className="mt-3 divide-y divide-black/5 rounded-2xl bg-white shadow-sm">
+            {late.map((s) => (
+              <PresentRow
+                key={s.id}
+                submission={s}
+                schema={event.formSchema}
+                kind="late"
+                busy={busyId === s.id || busyId === s.resident?.id}
+                onRemove={() => onRemove(s)}
+              />
+            ))}
+            {late.length === 0 && (
+              <p className="p-4 text-sm text-stone-mute">
+                {q ? "No matching late arrivals." : "Nobody has been marked late."}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {(list === "all" || list === "excused") && (
+        <section className="mt-8">
+          <h3 className="font-display text-lg">Excused absences</h3>
+          <div className="mt-3 divide-y divide-black/5 rounded-2xl bg-white shadow-sm">
+            {excused.map((s) => (
+              <PresentRow
+                key={s.id}
+                submission={s}
+                schema={event.formSchema}
+                kind="excused"
+                busy={busyId === s.id || busyId === s.resident?.id}
+                onRemove={() => onRemove(s)}
+              />
+            ))}
+            {excused.length === 0 && (
+              <p className="p-4 text-sm text-stone-mute">
+                {q ? "No matching excused absences." : "No excused absences."}
               </p>
             )}
           </div>
@@ -409,20 +550,38 @@ function PeopleLists({
                     </span>
                   </span>
                 </Link>
-                <button
-                  type="button"
-                  disabled={busyId === r.id}
-                  onClick={() => onMarkPresent(r)}
-                  className="shrink-0 rounded-lg bg-cardinal px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
-                >
-                  {busyId === r.id ? "Marking…" : "Mark present"}
-                </button>
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={() => onMarkPresent(r)}
+                    className="rounded-lg bg-cardinal px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                  >
+                    {busyId === r.id ? "Saving…" : "Present"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={() => onSetStatus({ resident: r }, "late")}
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-60"
+                  >
+                    Late
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={() => onSetStatus({ resident: r }, "excused")}
+                    className="rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-xs font-medium disabled:opacity-60"
+                  >
+                    Excused
+                  </button>
+                </div>
               </div>
             ))}
           </div>
           {missing.length === 0 && (
             <p className="mt-3 text-sm text-stone-mute">
-              {q ? "No matching people still out." : "Everyone on the roster is here."}
+              {q ? "No matching people still out." : "Everyone expected is accounted for."}
             </p>
           )}
         </section>
@@ -434,18 +593,24 @@ function PeopleLists({
 function PresentRow({
   submission: s,
   schema,
+  kind = "present",
   busy,
+  onMarkLate,
   onRemove,
 }: {
   submission: SubmissionRow;
   schema: FormSchema;
+  kind?: AttendanceStatus;
   busy: boolean;
+  onMarkLate?: () => void;
   onRemove: () => void;
 }) {
   const resident = s.resident;
   const name = resident ? fullName(resident) : s.guestName || "Guest";
   const answers = formatAnswers(schema, s.responseData);
   const staffMarked = Boolean(s.responseData?.staffMarked);
+  const lateAt = lateAtOf(s.responseData);
+  const excusedNote = excusedNoteOf(s.responseData);
   const person = (
     <>
       {resident ? (
@@ -468,7 +633,17 @@ function PresentRow({
               Guest
             </span>
           )}
-          {staffMarked && (
+          {kind === "late" && (
+            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+              Late
+            </span>
+          )}
+          {kind === "excused" && (
+            <span className="rounded-full bg-stone-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-mute">
+              Excused
+            </span>
+          )}
+          {staffMarked && kind === "present" && (
             <span className="rounded-full bg-cardinal/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cardinal">
               Marked by staff
             </span>
@@ -479,6 +654,12 @@ function PresentRow({
             ? [resident.room, resident.hall, resident.email].filter(Boolean).join(" · ")
             : "Name written at check-in — not matched to the roster"}
         </p>
+        {kind === "late" && lateAt && (
+          <p className="mt-1 text-xs text-amber-800">Marked late {formatCheckIn(lateAt)}</p>
+        )}
+        {kind === "excused" && excusedNote && (
+          <p className="mt-1 text-xs text-stone-mute">Note: {excusedNote}</p>
+        )}
         {answers.length > 0 && (
           <p className="mt-1 line-clamp-2 text-xs text-stone-mute">{answers.join(" · ")}</p>
         )}
@@ -510,28 +691,166 @@ function PresentRow({
             {s.accuracy != null && <p>±{Math.round(s.accuracy)} m GPS</p>}
           </>
         )}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="mt-1 rounded-lg px-2 py-1 text-xs font-medium text-cardinal hover:bg-cardinal/10 disabled:opacity-60"
-        >
-          {busy ? "Removing…" : "Remove"}
-        </button>
+        <div className="mt-2 flex flex-col items-end gap-1">
+          {onMarkLate && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onMarkLate();
+              }}
+              className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 disabled:opacity-60"
+            >
+              Mark late
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="rounded-lg border border-cardinal/20 px-2.5 py-1 text-xs font-medium text-cardinal hover:bg-cardinal/10 disabled:opacity-60"
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+function formatFieldValue(data: Record<string, unknown> | null | undefined, id: string): string {
+  if (!data) return "";
+  const value = data[id];
+  if (value == null || value === "" || value === false) return "";
+  return Array.isArray(value) ? value.filter(Boolean).join(", ") : String(value);
+}
+
+function guestNameParts(name: string | null): { first: string; last: string } {
+  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { first: "", last: "" };
+  if (parts.length === 1) return { first: parts[0], last: "" };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
+function exportAttendanceCsv(
+  event: AttendanceEvent,
+  groups: {
+    present: SubmissionRow[];
+    late: SubmissionRow[];
+    excused: SubmissionRow[];
+    missing: Resident[];
+  },
+  list: PeopleFilter,
+) {
+  const formFields = (event.formSchema?.fields ?? []).filter(
+    (field) => field.id !== "staffMarked" && field.type !== "heading" && field.type !== "conditional",
+  );
+  const contactHeaders = [
+    "Status",
+    "Name",
+    "First name",
+    "Last name",
+    "Legal name",
+    "Email",
+    "Phone",
+    "Room",
+    "Hall",
+    "Type",
+    "Hometown",
+    "Country",
+  ];
+  const includeCheckIn = list === "present" || list === "late" || list === "all";
+  const extraHeaders =
+    includeCheckIn
+      ? ["Checked in at", "Marked late at", "Marked by staff", ...formFields.map((field) => field.label || field.id)]
+      : list === "excused"
+        ? ["Note"]
+        : [];
+  const headers = [...contactHeaders, ...extraHeaders];
+  const rows: unknown[][] = [];
+  const pushSubmission = (submission: SubmissionRow, statusLabel: string) => {
+    const resident = submission.resident;
+    const guest = guestNameParts(submission.guestName);
+    const contact = [
+      statusLabel,
+      resident ? fullName(resident) : submission.guestName || "Guest",
+      resident?.firstName ?? guest.first,
+      resident?.lastName ?? guest.last,
+      resident?.legalName ?? "",
+      resident?.email ?? "",
+      resident?.phone ?? "",
+      resident?.room ?? "",
+      resident?.hall ?? "",
+      resident?.type ?? (resident ? "" : "Guest"),
+      resident?.hometown ?? "",
+      resident?.country ?? "",
+    ];
+    if (includeCheckIn) {
+      rows.push([
+        ...contact,
+        submission.createdAt ? new Date(submission.createdAt).toLocaleString() : "",
+        lateAtOf(submission.responseData) ? new Date(String(lateAtOf(submission.responseData))).toLocaleString() : "",
+        submission.responseData?.staffMarked ? "Yes" : "",
+        ...formFields.map((field) => formatFieldValue(submission.responseData, field.id)),
+      ]);
+      return;
+    }
+    rows.push(list === "excused" ? [...contact, excusedNoteOf(submission.responseData) ?? ""] : contact);
+  };
+  if (list === "all" || list === "present") {
+    for (const submission of groups.present) pushSubmission(submission, "Present");
+  }
+  if (list === "all" || list === "late") {
+    for (const submission of groups.late) pushSubmission(submission, "Late");
+  }
+  if (list === "all" || list === "excused") {
+    for (const submission of groups.excused) pushSubmission(submission, "Excused");
+  }
+  if (list === "all" || list === "absent") {
+    for (const resident of groups.missing) {
+      const contact = [
+        "Absent",
+        fullName(resident),
+        resident.firstName,
+        resident.lastName,
+        resident.legalName ?? "",
+        resident.email,
+        resident.phone ?? "",
+        resident.room,
+        resident.hall,
+        resident.type,
+        resident.hometown ?? "",
+        resident.country ?? "",
+      ];
+      if (includeCheckIn) rows.push([...contact, "", "", "", ...formFields.map(() => "")]);
+      else rows.push(contact);
+    }
+  }
+  const filter =
+    list === "present"
+      ? "present"
+      : list === "late"
+        ? "late"
+        : list === "excused"
+          ? "excused"
+          : list === "absent"
+            ? "not-here"
+            : "all";
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadTextFile(`${fileSlug(event.title)}-${filter}-${stamp}.csv`, toCsv(headers, rows));
 }
 
 function formatAnswers(schema: FormSchema, data: Record<string, unknown> | null | undefined): string[] {
   if (!data) return [];
   return (schema.fields ?? [])
     .map((field) => {
-      if (field.id === "staffMarked") return null;
+      if (field.id === "staffMarked" || field.id === "late" || field.id === "lateAt" || field.id === "excused" || field.id === "excusedNote" || field.id === "formSubmitted") return null;
       const value = data[field.id];
       if (value == null || value === "" || value === false) return null;
       const shown = Array.isArray(value) ? value.filter(Boolean).join(", ") : String(value);
@@ -545,10 +864,17 @@ function deriveRollup(
   event: AttendanceEvent | null,
   submissions: SubmissionRow[],
   absent: Resident[],
-  analytics: { present: number; expected: number; absent: number; byHall: Record<string, { present: number; expected: number }> } | null,
+  analytics: {
+    present: number;
+    late?: number;
+    excused?: number;
+    expected: number;
+    absent: number;
+    byHall: Record<string, { present: number; late?: number; excused?: number; expected: number }>;
+  } | null,
 ) {
   if (!event || !analytics) {
-    return { present: 0, expected: 0, absent: 0, byHall: {}, missing: absent, notHere: absent };
+    return { present: 0, late: 0, excused: 0, expected: 0, absent: 0, byHall: {}, missing: absent };
   }
   const house = eventIsHouseMeeting(event);
   const byId = new Map<string, Resident>();
@@ -558,32 +884,48 @@ function deriveRollup(
   for (const row of absent) byId.set(row.id, row);
   const roster = [...byId.values()];
   const expectedPeople = house ? roster.filter((r) => !isRa(r)) : roster;
-  const presentIds = new Set(
-    submissions
-      .map((s) => s.residentId ?? s.resident?.id)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const presentExpectedIds = new Set(
+  const counted = (status: AttendanceStatus) =>
+    submissions.filter((s) => attendanceStatus(s) === status && (!house || !isRa(s.resident)));
+  const presentRows = counted("present");
+  const lateRows = counted("late");
+  const excusedRows = counted("excused");
+  const accountedIds = new Set(
     submissions
       .filter((s) => s.resident && (!house || !isRa(s.resident)))
       .map((s) => s.resident!.id),
   );
-  const missing = expectedPeople.filter((r) => !presentExpectedIds.has(r.id));
-  const notHere = roster.filter((r) => !presentIds.has(r.id));
-  const counted = house ? submissions.filter((s) => !isRa(s.resident)) : submissions;
-  const byHall: Record<string, { present: number; expected: number }> = {};
+  const missing = expectedPeople.filter((r) => !accountedIds.has(r.id));
+  const byHall: Record<string, { present: number; late: number; excused: number; expected: number }> = {};
   for (const r of expectedPeople) {
-    byHall[r.hall] ??= { present: 0, expected: 0 };
+    byHall[r.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
     byHall[r.hall].expected += 1;
-    if (presentExpectedIds.has(r.id)) byHall[r.hall].present += 1;
+  }
+  for (const s of presentRows) {
+    if (s.resident?.hall) {
+      byHall[s.resident.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
+      byHall[s.resident.hall].present += 1;
+    }
+  }
+  for (const s of lateRows) {
+    if (s.resident?.hall) {
+      byHall[s.resident.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
+      byHall[s.resident.hall].late += 1;
+    }
+  }
+  for (const s of excusedRows) {
+    if (s.resident?.hall) {
+      byHall[s.resident.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
+      byHall[s.resident.hall].excused += 1;
+    }
   }
   return {
-    present: counted.length,
+    present: presentRows.length,
+    late: lateRows.length,
+    excused: excusedRows.length,
     expected: expectedPeople.length,
     absent: missing.length,
     byHall,
     missing,
-    notHere,
   };
 }
 

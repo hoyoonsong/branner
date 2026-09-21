@@ -50,3 +50,36 @@ export function personSearchHay(parts: Array<string | null | undefined>): string
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 }
+
+export function csvCell(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+export function toCsv(headers: string[], rows: Array<Array<unknown>>): string {
+  return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+
+export function downloadTextFile(filename: string, text: string, type = "text/csv;charset=utf-8") {
+  const blob = new Blob(["\uFEFF" + text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function fileSlug(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "export"
+  );
+}

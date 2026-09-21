@@ -4,6 +4,7 @@ import { requireApproved } from "../auth.js";
 import { BRANNER_LAT, BRANNER_LNG } from "../geo.js";
 import { eventIsHouseMeeting, isHouseMeeting, isRa } from "../roster.js";
 import { slugify, uniqueSlug } from "../slug.js";
+import { applyAttendanceStatus, attendanceStatus, parseResponseData } from "../attendance.js";
 
 export const eventsRouter = Router();
 eventsRouter.use(requireApproved);
@@ -80,30 +81,49 @@ eventsRouter.get("/:id", async (req, res) => {
   const houseMeeting = eventIsHouseMeeting(event);
   const expected = houseMeeting ? residents.filter((r) => !isRa(r.type)) : residents;
   const visibleSubmissions = countedSubmissions(event, submissions);
-  const presentIds = new Set(
+  const accountedIds = new Set(
     submissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
   );
-  const countedPresentIds = new Set(
-    visibleSubmissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
-  );
-  const absent = residents.filter((r) => !presentIds.has(r.id));
-  const byHall: Record<string, { present: number; expected: number }> = {};
+  const absent = expected.filter((r) => !accountedIds.has(r.id));
+  const presentRows = visibleSubmissions.filter((s) => attendanceStatus(s) === "present");
+  const lateRows = visibleSubmissions.filter((s) => attendanceStatus(s) === "late");
+  const excusedRows = visibleSubmissions.filter((s) => attendanceStatus(s) === "excused");
+  const byHall: Record<string, { present: number; late: number; excused: number; expected: number }> = {};
   for (const r of expected) {
-    byHall[r.hall] ??= { present: 0, expected: 0 };
+    byHall[r.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
     byHall[r.hall].expected += 1;
-    if (countedPresentIds.has(r.id)) byHall[r.hall].present += 1;
+  }
+  for (const s of presentRows) {
+    if (s.resident?.hall) {
+      byHall[s.resident.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
+      byHall[s.resident.hall].present += 1;
+    }
+  }
+  for (const s of lateRows) {
+    if (s.resident?.hall) {
+      byHall[s.resident.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
+      byHall[s.resident.hall].late += 1;
+    }
+  }
+  for (const s of excusedRows) {
+    if (s.resident?.hall) {
+      byHall[s.resident.hall] ??= { present: 0, late: 0, excused: 0, expected: 0 };
+      byHall[s.resident.hall].excused += 1;
+    }
   }
   res.json({
     event: { ...event, formSchema: JSON.parse(event.formSchema) },
     submissions: submissions.map((s) => ({
       ...s,
-      responseData: JSON.parse(s.responseData),
+      responseData: parseResponseData(s.responseData),
     })),
     absent,
     analytics: {
-      present: visibleSubmissions.length,
+      present: presentRows.length,
+      late: lateRows.length,
+      excused: excusedRows.length,
       expected: expected.length,
-      absent: expected.filter((r) => !countedPresentIds.has(r.id)).length,
+      absent: absent.length,
       byHall,
     },
   });
@@ -140,13 +160,79 @@ eventsRouter.post("/:id/mark-present", async (req, res) => {
       eventId: event.id,
       residentId: resident.id,
       guestName: `${resident.firstName} ${resident.lastName}`,
-      responseData: JSON.stringify({ staffMarked: true }),
+      responseData: JSON.stringify(applyAttendanceStatus({}, "present")),
       status: "present",
     },
     include: { resident: true },
   });
   res.json({
     submission: { ...submission, responseData: JSON.parse(submission.responseData) },
+  });
+});
+
+eventsRouter.post("/:id/set-status", async (req, res) => {
+  const statusRaw = String(req.body?.status ?? "").toLowerCase();
+  if (statusRaw !== "present" && statusRaw !== "late" && statusRaw !== "excused") {
+    res.status(400).json({ error: "Status must be present, late, or excused" });
+    return;
+  }
+  const residentId = String(req.body?.residentId ?? "").trim();
+  const submissionId = String(req.body?.submissionId ?? "").trim();
+  const note = String(req.body?.note ?? "").trim();
+  const event = await prisma.event.findUnique({ where: { id: req.params.id } });
+  if (!event) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+
+  let existing = submissionId
+    ? await prisma.submission.findFirst({
+        where: { id: submissionId, eventId: event.id },
+        include: { resident: true },
+      })
+    : residentId
+      ? await prisma.submission.findFirst({
+          where: { eventId: event.id, residentId },
+          include: { resident: true },
+        })
+      : null;
+
+  const resident =
+    existing?.resident ??
+    (residentId ? await prisma.resident.findUnique({ where: { id: residentId } }) : null);
+  if (!existing && !resident) {
+    res.status(404).json({ error: "Resident not found" });
+    return;
+  }
+
+  const nextData = applyAttendanceStatus(parseResponseData(existing?.responseData), statusRaw, note);
+  if (existing) {
+    existing = await prisma.submission.update({
+      where: { id: existing.id },
+      data: {
+        status: statusRaw,
+        responseData: JSON.stringify(nextData),
+        guestName: existing.guestName || (resident ? `${resident.firstName} ${resident.lastName}` : null),
+      },
+      include: { resident: true },
+    });
+  } else if (resident) {
+    existing = await prisma.submission.create({
+      data: {
+        eventId: event.id,
+        residentId: resident.id,
+        guestName: `${resident.firstName} ${resident.lastName}`,
+        responseData: JSON.stringify(nextData),
+        status: statusRaw,
+      },
+      include: { resident: true },
+    });
+  }
+
+  res.json({
+    submission: existing
+      ? { ...existing, responseData: parseResponseData(existing.responseData) }
+      : null,
   });
 });
 
@@ -257,7 +343,12 @@ async function removeSubmission(eventId: string, submissionId: string) {
 }
 
 function countedSubmissions<
-  T extends { resident?: { type?: string | null } | null; residentId?: string | null },
+  T extends {
+    status?: string | null;
+    responseData?: string | Record<string, unknown> | null;
+    resident?: { type?: string | null } | null;
+    residentId?: string | null;
+  },
 >(
   event: {
     houseMeeting?: boolean | null;
@@ -265,6 +356,7 @@ function countedSubmissions<
   },
   submissions: T[],
 ): T[] {
-  if (!eventIsHouseMeeting(event)) return submissions;
-  return submissions.filter((s) => !isRa(s.resident?.type));
+  const visible = submissions.filter((s) => attendanceStatus(s) !== "excused");
+  if (!eventIsHouseMeeting(event)) return visible;
+  return visible.filter((s) => !isRa(s.resident?.type));
 }
