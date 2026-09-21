@@ -73,9 +73,10 @@ publicRouter.get("/events/:slug", async (req, res) => {
         : null,
     alreadySubmitted: Boolean(existing),
     alreadyAs: existing
-      ? existing.resident
-        ? `${existing.resident.firstName} ${existing.resident.lastName}`
-        : existing.guestName
+      ? `${firstName} ${lastName}`.trim() ||
+        (existing.resident
+          ? `${existing.resident.firstName} ${existing.resident.lastName}`
+          : existing.guestName)
       : null,
     googleEnabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     allowDevLogin: process.env.ALLOW_DEV_LOGIN === "1" || !process.env.GOOGLE_CLIENT_ID,
@@ -159,9 +160,10 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
   if (oneResponse) {
     const existing = await findExistingCheckIn(event.id, resident, guestName);
     if (existing) {
-      const who = existing.resident
-        ? `${existing.resident.firstName} ${existing.resident.lastName}`
-        : existing.guestName;
+      const who = guestName ||
+        (existing.resident
+          ? `${existing.resident.firstName} ${existing.resident.lastName}`
+          : existing.guestName);
       res.status(409).json({
         error: who
           ? `${who} already checked in for this event`

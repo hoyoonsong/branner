@@ -55,12 +55,14 @@ importRouter.post("/roster", async (req, res) => {
     const email = String(row.email || "").trim().toLowerCase();
     if (!email) continue;
 
-    let photoPath: string | undefined;
+    let photoPath: string | null | undefined;
     if (row.photoBase64) {
       const destName = `${email.replace(/[^a-z0-9.@-]/g, "_")}.jpg`;
       writeFileSync(path.join(destDir, destName), Buffer.from(row.photoBase64, "base64"));
       photoPath = `/uploads/residents/${destName}`;
       photos++;
+    } else if (row.photoBase64 === "") {
+      photoPath = null;
     }
 
     await prisma.resident.upsert({
@@ -90,7 +92,7 @@ importRouter.post("/roster", async (req, res) => {
       update: {
         firstName: row.firstName,
         lastName: row.lastName,
-        legalName: row.legalName ?? undefined,
+        legalName: row.legalName ?? null,
         building: row.building,
         bedSlot: row.bedSlot,
         room: row.room,
@@ -106,7 +108,7 @@ importRouter.post("/roster", async (req, res) => {
         checkIn: row.checkIn,
         earlyArrival: row.earlyArrival,
         notes: row.notes,
-        photoPath: photoPath ?? undefined,
+        ...(photoPath !== undefined ? { photoPath } : {}),
       },
     });
     upserted++;

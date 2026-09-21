@@ -276,13 +276,15 @@ export function PublicAttendance() {
           lastName: lastName.trim(),
         }),
       });
-      const who = result.resident
-        ? `${result.resident.firstName} ${result.resident.lastName} · Room ${result.resident.room}`
-        : result.guestName || `${firstName.trim()} ${lastName.trim()}`;
+      const typed = `${firstName.trim()} ${lastName.trim()}`;
+      const who = typed || result.guestName ||
+        (result.resident
+          ? `${result.resident.firstName} ${result.resident.lastName}`
+          : "");
       rememberDone(
         event.slug,
-        result.resident?.firstName ?? firstName.trim(),
-        result.resident?.lastName ?? lastName.trim(),
+        firstName.trim(),
+        lastName.trim(),
         `You're checked in as ${who}.`,
       );
     } catch (err) {

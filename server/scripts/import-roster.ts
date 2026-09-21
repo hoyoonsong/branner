@@ -3,6 +3,7 @@ import { createReadStream, existsSync, mkdirSync, copyFileSync, readdirSync } fr
 import { createInterface } from "readline";
 import path from "path";
 import { prisma } from "../prisma.js";
+import { assignPhotos } from "../names.js";
 
 const ROOT = path.resolve(process.cwd());
 const CSV_CANDIDATES = [
@@ -43,37 +44,6 @@ function parseCsvLine(line: string): string[] {
   return out;
 }
 
-function norm(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function tokens(s: string): string[] {
-  return norm(s).split(" ").filter(Boolean);
-}
-
-function scoreName(preferred: string, legalFile: string): number {
-  const a = tokens(preferred);
-  const b = tokens(legalFile.replace(/\.jpe?g$/i, ""));
-  if (!a.length || !b.length) return 0;
-  const lastA = a[a.length - 1];
-  const lastB = b[b.length - 1];
-  if (lastA !== lastB) {
-    // preferred last vs legal last; also try first-of-legal as last
-    if (!b.includes(lastA) && !a.includes(lastB)) return 0;
-  }
-  const setB = new Set(b);
-  let hits = 0;
-  for (const t of a) if (setB.has(t)) hits++;
-  const lastBonus = lastA === lastB ? 3 : b.includes(lastA) ? 1.5 : 0;
-  const firstBonus = a[0] && b[0] && (a[0] === b[0] || b.includes(a[0])) ? 2 : 0;
-  return hits + lastBonus + firstBonus;
-}
-
 async function readCsv(file: string): Promise<string[][]> {
   const rows: string[][] = [];
   const rl = createInterface({ input: createReadStream(file) });
@@ -101,14 +71,38 @@ async function main() {
   const header = rows[0];
   console.log("CSV columns", header.length, "rows", rows.length - 1);
 
-  let matched = 0;
-  let missingPhoto = 0;
-
-  for (const row of rows.slice(1)) {
+  const people = rows.slice(1).flatMap((row) => {
     const last = row[0]?.trim();
     const first = row[1]?.trim();
     const email = row[2]?.trim().toLowerCase();
-    if (!email || !first || !last) continue;
+    if (!email || !first || !last) return [];
+    return [{ firstName: first, lastName: last, email, row }];
+  });
+  const photoByEmail = new Map<string, { file: string; dir: string; label: string }>();
+  if (photoFiles.length) {
+    const assigned = assignPhotos(
+      photoFiles.map((photo) => ({
+        id: `${photo.dir}::${photo.file}`,
+        label: photo.file,
+      })),
+      people,
+    );
+    for (const [id, person] of assigned) {
+      const [dir, file] = id.split("::");
+      photoByEmail.set(person.email, { dir, file, label: file.replace(/\.jpe?g$/i, "") });
+    }
+  }
+
+  let matched = 0;
+  let missingPhoto = 0;
+
+  for (const person of people) {
+    const { first, last, email, row } = {
+      first: person.firstName,
+      last: person.lastName,
+      email: person.email,
+      row: person.row,
+    };
     const building = row[3]?.trim() || "Branner";
     const bedSlot = row[4]?.trim() || "";
     const room = row[13]?.trim() || bedSlot.replace(/[A-C]$/, "");
@@ -118,22 +112,17 @@ async function main() {
 
     let photoPath: string | null = null;
     let legalName: string | null = null;
-    if (photoFiles.length) {
-      let best = { file: "", dir: "", score: 0 };
-      for (const photo of photoFiles) {
-        const s = scoreName(preferred, photo.file);
-        if (s > best.score) best = { ...photo, score: s };
-      }
-      if (best.score >= 4) {
-        const destName = `${email.replace(/[^a-z0-9.@-]/g, "_")}.jpg`;
-        copyFileSync(path.join(best.dir, best.file), path.join(destDir, destName));
-        photoPath = `/uploads/residents/${destName}`;
-        legalName = best.file.replace(/\.jpe?g$/i, "");
-        matched++;
-      } else {
-        missingPhoto++;
-        console.log("No photo for", preferred, "best", best.file, best.score);
-      }
+    const photo = photoByEmail.get(email);
+    if (photo) {
+      const destName = `${email.replace(/[^a-z0-9.@-]/g, "_")}.jpg`;
+      copyFileSync(path.join(photo.dir, photo.file), path.join(destDir, destName));
+      photoPath = `/uploads/residents/${destName}`;
+      legalName = photo.label;
+      matched++;
+      console.log("Photo", preferred, "←", photo.file);
+    } else {
+      missingPhoto++;
+      console.log("No photo for", preferred);
     }
 
     const clean = (v: string | undefined) => {
@@ -183,7 +172,7 @@ async function main() {
         tshirtSize: clean(row[18]),
         checkIn: clean(row[6]),
         earlyArrival: clean(row[7]),
-        photoPath: photoPath ?? undefined,
+        photoPath,
       },
     });
   }

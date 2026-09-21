@@ -50,7 +50,7 @@ async function main() {
         checkIn: row.checkIn,
         earlyArrival: row.earlyArrival,
         notes: row.notes,
-        photoBase64,
+        photoBase64: photoBase64 ?? "",
       };
     });
 
