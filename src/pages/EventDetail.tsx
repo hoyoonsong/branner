@@ -12,6 +12,7 @@ import { Avatar, RaBadge } from "./Residents";
 type SubmissionRow = {
   id: string;
   createdAt: string;
+  residentId?: string | null;
   distanceM: number | null;
   accuracy: number | null;
   guestName: string | null;
@@ -34,6 +35,8 @@ export function EventDetail() {
   const [settings, setSettings] = useState(false);
   const [peopleQ, setPeopleQ] = useState("");
   const [list, setList] = useState<"all" | "present" | "absent">("all");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [peopleError, setPeopleError] = useState("");
 
   const load = async () => {
     if (!id) return;
@@ -73,6 +76,57 @@ export function EventDetail() {
       body: JSON.stringify({ formSchema }),
     });
     setEvent({ ...event, formSchema });
+  };
+
+  const markPresent = async (resident: Resident) => {
+    setPeopleError("");
+    setBusyId(resident.id);
+    try {
+      const marked = await fetch(`/api/events/${event.id}/mark-present`, {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ residentId: resident.id }),
+      });
+      if (!marked.ok) {
+        if (marked.status !== 404 || event.requireLogin) {
+          const data = (await marked.json().catch(() => ({}))) as { error?: string };
+          throw new Error(data.error || marked.statusText);
+        }
+        await api(`/api/public/events/${event.slug}/submit`, {
+          method: "POST",
+          body: JSON.stringify({
+            firstName: resident.firstName,
+            lastName: resident.lastName,
+            answers: { staffMarked: true },
+            lat: event.lat,
+            lng: event.lng,
+            accuracy: 0,
+          }),
+        });
+      }
+      await load();
+    } catch (err) {
+      setPeopleError(err instanceof Error ? err.message : "Could not mark present");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const removeCheckIn = async (submissionId: string) => {
+    setPeopleError("");
+    setBusyId(submissionId);
+    try {
+      await api(`/api/events/${event.id}/unmark`, {
+        method: "POST",
+        body: JSON.stringify({ submissionId }),
+      });
+      await load();
+    } catch (err) {
+      setPeopleError(err instanceof Error ? err.message : "Could not remove check-in");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -152,11 +206,15 @@ export function EventDetail() {
       <PeopleLists
         event={event}
         submissions={submissions}
-        absent={rollup.missing}
+        absent={rollup.notHere}
         query={peopleQ}
         onQuery={setPeopleQ}
         list={list}
         onList={setList}
+        busyId={busyId}
+        error={peopleError}
+        onMarkPresent={markPresent}
+        onRemove={removeCheckIn}
       />
 
       {settings && (
@@ -205,6 +263,10 @@ function PeopleLists({
   onQuery,
   list,
   onList,
+  busyId,
+  error,
+  onMarkPresent,
+  onRemove,
 }: {
   event: AttendanceEvent;
   submissions: SubmissionRow[];
@@ -213,6 +275,10 @@ function PeopleLists({
   onQuery: (q: string) => void;
   list: "all" | "present" | "absent";
   onList: (v: "all" | "present" | "absent") => void;
+  busyId: string | null;
+  error: string;
+  onMarkPresent: (resident: Resident) => void;
+  onRemove: (submissionId: string) => void;
 }) {
   const q = personSearchHay([query]);
   const present = useMemo(() => {
@@ -261,7 +327,8 @@ function PeopleLists({
         <div>
           <h2 className="font-display text-xl">Who is here</h2>
           <p className="text-sm text-stone-mute">
-            Search names, rooms, halls, emails, or form answers. Check-in times update live.
+            Search names, rooms, halls, emails, or form answers. Mark someone present if they are here
+            but did not check in.
           </p>
         </div>
         <input
@@ -293,12 +360,20 @@ function PeopleLists({
         ))}
       </div>
 
+      {error && <p className="mt-3 text-sm text-cardinal">{error}</p>}
+
       {(list === "all" || list === "present") && (
         <section className="mt-6">
           <h3 className="font-display text-lg">Present</h3>
           <div className="mt-3 divide-y divide-black/5 rounded-2xl bg-white shadow-sm">
             {present.map((s) => (
-              <PresentRow key={s.id} submission={s} schema={event.formSchema} />
+              <PresentRow
+                key={s.id}
+                submission={s}
+                schema={event.formSchema}
+                busy={busyId === s.id}
+                onRemove={() => onRemove(s.id)}
+              />
             ))}
             {present.length === 0 && (
               <p className="p-4 text-sm text-stone-mute">
@@ -314,26 +389,35 @@ function PeopleLists({
           <h3 className="font-display text-lg">Not yet here</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {missing.map((r) => (
-              <Link
+              <div
                 key={r.id}
-                to={`/residents/${r.id}`}
                 className={clsx(
                   "flex items-center gap-3 rounded-xl px-3 py-2 shadow-sm",
                   isRa(r) ? "bg-amber-50 ring-1 ring-amber-300" : "bg-white",
                 )}
               >
-                <Avatar resident={r} size={36} />
-                <span className="min-w-0 text-sm">
-                  <span className="flex flex-wrap items-center gap-2 font-medium">
-                    {fullName(r)}
-                    {isRa(r) && <RaBadge />}
+                <Link to={`/residents/${r.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                  <Avatar resident={r} size={36} />
+                  <span className="min-w-0 text-sm">
+                    <span className="flex flex-wrap items-center gap-2 font-medium">
+                      {fullName(r)}
+                      {isRa(r) && <RaBadge />}
+                    </span>
+                    <span className="block text-xs text-stone-mute">
+                      {r.room} · {r.hall}
+                      {r.email ? ` · ${r.email}` : ""}
+                    </span>
                   </span>
-                  <span className="block text-xs text-stone-mute">
-                    {r.room} · {r.hall}
-                    {r.email ? ` · ${r.email}` : ""}
-                  </span>
-                </span>
-              </Link>
+                </Link>
+                <button
+                  type="button"
+                  disabled={busyId === r.id}
+                  onClick={() => onMarkPresent(r)}
+                  className="shrink-0 rounded-lg bg-cardinal px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {busyId === r.id ? "Marking…" : "Mark present"}
+                </button>
+              </div>
             ))}
           </div>
           {missing.length === 0 && (
@@ -350,14 +434,19 @@ function PeopleLists({
 function PresentRow({
   submission: s,
   schema,
+  busy,
+  onRemove,
 }: {
   submission: SubmissionRow;
   schema: FormSchema;
+  busy: boolean;
+  onRemove: () => void;
 }) {
   const resident = s.resident;
   const name = resident ? fullName(resident) : s.guestName || "Guest";
   const answers = formatAnswers(schema, s.responseData);
-  const inner = (
+  const staffMarked = Boolean(s.responseData?.staffMarked);
+  const person = (
     <>
       {resident ? (
         <Avatar resident={resident} />
@@ -379,6 +468,11 @@ function PresentRow({
               Guest
             </span>
           )}
+          {staffMarked && (
+            <span className="rounded-full bg-cardinal/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cardinal">
+              Marked by staff
+            </span>
+          )}
         </p>
         <p className="text-xs text-stone-mute">
           {resident
@@ -389,34 +483,55 @@ function PresentRow({
           <p className="mt-1 line-clamp-2 text-xs text-stone-mute">{answers.join(" · ")}</p>
         )}
       </div>
-      <div className="shrink-0 text-right text-xs text-stone-mute">
-        <p>{formatCheckIn(s.createdAt)}</p>
-        {s.distanceM != null && <p>{Math.round(s.distanceM)} m away</p>}
-        {s.accuracy != null && <p>±{Math.round(s.accuracy)} m GPS</p>}
-      </div>
     </>
   );
 
-  const cls = clsx(
-    "flex items-center gap-3 px-4 py-3",
-    isRa(resident) && "bg-amber-50/80",
-    resident && "hover:bg-stone-sand",
+  return (
+    <div
+      className={clsx(
+        "flex items-center gap-3 px-4 py-3",
+        isRa(resident) && "bg-amber-50/80",
+      )}
+    >
+      {resident ? (
+        <Link to={`/residents/${resident.id}`} className="flex min-w-0 flex-1 items-center gap-3 hover:text-cardinal">
+          {person}
+        </Link>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-3">{person}</div>
+      )}
+      <div className="shrink-0 text-right text-xs text-stone-mute">
+        <p>{formatCheckIn(s.createdAt)}</p>
+        {staffMarked ? (
+          <p>No GPS</p>
+        ) : (
+          <>
+            {s.distanceM != null && <p>{Math.round(s.distanceM)} m away</p>}
+            {s.accuracy != null && <p>±{Math.round(s.accuracy)} m GPS</p>}
+          </>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="mt-1 rounded-lg px-2 py-1 text-xs font-medium text-cardinal hover:bg-cardinal/10 disabled:opacity-60"
+        >
+          {busy ? "Removing…" : "Remove"}
+        </button>
+      </div>
+    </div>
   );
-
-  if (resident) {
-    return (
-      <Link to={`/residents/${resident.id}`} className={cls}>
-        {inner}
-      </Link>
-    );
-  }
-  return <div className={cls}>{inner}</div>;
 }
 
 function formatAnswers(schema: FormSchema, data: Record<string, unknown> | null | undefined): string[] {
   if (!data) return [];
   return (schema.fields ?? [])
     .map((field) => {
+      if (field.id === "staffMarked") return null;
       const value = data[field.id];
       if (value == null || value === "" || value === false) return null;
       const shown = Array.isArray(value) ? value.filter(Boolean).join(", ") : String(value);
@@ -433,7 +548,7 @@ function deriveRollup(
   analytics: { present: number; expected: number; absent: number; byHall: Record<string, { present: number; expected: number }> } | null,
 ) {
   if (!event || !analytics) {
-    return { present: 0, expected: 0, absent: 0, byHall: {}, missing: absent };
+    return { present: 0, expected: 0, absent: 0, byHall: {}, missing: absent, notHere: absent };
   }
   const house = eventIsHouseMeeting(event);
   const byId = new Map<string, Resident>();
@@ -443,12 +558,18 @@ function deriveRollup(
   for (const row of absent) byId.set(row.id, row);
   const roster = [...byId.values()];
   const expectedPeople = house ? roster.filter((r) => !isRa(r)) : roster;
+  const presentIds = new Set(
+    submissions
+      .map((s) => s.residentId ?? s.resident?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
   const presentExpectedIds = new Set(
     submissions
       .filter((s) => s.resident && (!house || !isRa(s.resident)))
       .map((s) => s.resident!.id),
   );
   const missing = expectedPeople.filter((r) => !presentExpectedIds.has(r.id));
+  const notHere = roster.filter((r) => !presentIds.has(r.id));
   const counted = house ? submissions.filter((s) => !isRa(s.resident)) : submissions;
   const byHall: Record<string, { present: number; expected: number }> = {};
   for (const r of expectedPeople) {
@@ -462,6 +583,7 @@ function deriveRollup(
     absent: missing.length,
     byHall,
     missing,
+    notHere,
   };
 }
 

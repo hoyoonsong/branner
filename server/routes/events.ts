@@ -81,14 +81,17 @@ eventsRouter.get("/:id", async (req, res) => {
   const expected = houseMeeting ? residents.filter((r) => !isRa(r.type)) : residents;
   const visibleSubmissions = countedSubmissions(event, submissions);
   const presentIds = new Set(
+    submissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
+  );
+  const countedPresentIds = new Set(
     visibleSubmissions.map((s) => s.residentId).filter((id): id is string => Boolean(id)),
   );
-  const absent = expected.filter((r) => !presentIds.has(r.id));
+  const absent = residents.filter((r) => !presentIds.has(r.id));
   const byHall: Record<string, { present: number; expected: number }> = {};
   for (const r of expected) {
     byHall[r.hall] ??= { present: 0, expected: 0 };
     byHall[r.hall].expected += 1;
-    if (presentIds.has(r.id)) byHall[r.hall].present += 1;
+    if (countedPresentIds.has(r.id)) byHall[r.hall].present += 1;
   }
   res.json({
     event: { ...event, formSchema: JSON.parse(event.formSchema) },
@@ -100,10 +103,74 @@ eventsRouter.get("/:id", async (req, res) => {
     analytics: {
       present: visibleSubmissions.length,
       expected: expected.length,
-      absent: absent.length,
+      absent: expected.filter((r) => !countedPresentIds.has(r.id)).length,
       byHall,
     },
   });
+});
+
+eventsRouter.post("/:id/mark-present", async (req, res) => {
+  const residentId = String(req.body?.residentId ?? "").trim();
+  if (!residentId) {
+    res.status(400).json({ error: "Resident required" });
+    return;
+  }
+  const event = await prisma.event.findUnique({ where: { id: req.params.id } });
+  if (!event) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const resident = await prisma.resident.findUnique({ where: { id: residentId } });
+  if (!resident) {
+    res.status(404).json({ error: "Resident not found" });
+    return;
+  }
+  const existing = await prisma.submission.findFirst({
+    where: { eventId: event.id, residentId: resident.id },
+    include: { resident: true },
+  });
+  if (existing) {
+    res.json({
+      submission: { ...existing, responseData: JSON.parse(existing.responseData) },
+    });
+    return;
+  }
+  const submission = await prisma.submission.create({
+    data: {
+      eventId: event.id,
+      residentId: resident.id,
+      guestName: `${resident.firstName} ${resident.lastName}`,
+      responseData: JSON.stringify({ staffMarked: true }),
+      status: "present",
+    },
+    include: { resident: true },
+  });
+  res.json({
+    submission: { ...submission, responseData: JSON.parse(submission.responseData) },
+  });
+});
+
+eventsRouter.post("/:id/unmark", async (req, res) => {
+  const submissionId = String(req.body?.submissionId ?? "").trim();
+  if (!submissionId) {
+    res.status(400).json({ error: "Check-in required" });
+    return;
+  }
+  const removed = await removeSubmission(req.params.id, submissionId);
+  if (!removed) {
+    res.status(404).json({ error: "Check-in not found" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+eventsRouter.delete("/:id/submissions/:submissionId", async (req, res) => {
+  const removed = await removeSubmission(req.params.id, req.params.submissionId);
+  if (!removed) {
+    res.status(404).json({ error: "Check-in not found" });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 eventsRouter.post("/", async (req, res) => {
@@ -179,6 +246,15 @@ eventsRouter.delete("/:id", async (req, res) => {
   await prisma.event.delete({ where: { id: req.params.id } });
   res.json({ ok: true });
 });
+
+async function removeSubmission(eventId: string, submissionId: string) {
+  const existing = await prisma.submission.findFirst({
+    where: { id: submissionId, eventId },
+  });
+  if (!existing) return false;
+  await prisma.submission.delete({ where: { id: existing.id } });
+  return true;
+}
 
 function countedSubmissions<
   T extends { resident?: { type?: string | null } | null; residentId?: string | null },
