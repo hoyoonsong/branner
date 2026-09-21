@@ -54,6 +54,7 @@ export function PublicAttendance() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const watchRef = useRef<number | null>(null);
+  const locAskedRef = useRef(false);
 
   const rememberDone = (
     slugKey: string,
@@ -135,14 +136,6 @@ export function PublicAttendance() {
         /* keep current done */
       }
     }
-    if (nextEvent.locationTracking) {
-      setLoc((prev) =>
-        prev === "inside" || prev === "outside" ? prev : "prompt",
-      );
-      setAsk(true);
-    } else {
-      setLoc("off");
-    }
   };
 
   useEffect(() => {
@@ -177,15 +170,13 @@ export function PublicAttendance() {
     load({ firstName: first, lastName: last }).catch((e) =>
       setError((e as Error).message),
     );
-    return () => {
-      if (watchRef.current != null)
-        navigator.geolocation.clearWatch(watchRef.current);
-    };
   }, [slug]);
 
   const startWatch = () => {
     if (!event?.locationTracking || event.lat == null || event.lng == null)
       return;
+    locAskedRef.current = true;
+    sessionStorage.setItem(`branner-loc:${event.slug}`, "watching");
     setAsk(false);
     setLoc("locating");
     if (!("geolocation" in navigator)) {
@@ -210,6 +201,27 @@ export function PublicAttendance() {
       { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 },
     );
   };
+
+  useEffect(() => {
+    if (!event?.locationTracking || !event.slug) return;
+    if (watchRef.current != null) return;
+    const prior = sessionStorage.getItem(`branner-loc:${event.slug}`);
+    if (prior === "watching") {
+      startWatch();
+      return;
+    }
+    if (locAskedRef.current || prior === "asked") return;
+    locAskedRef.current = true;
+    sessionStorage.setItem(`branner-loc:${event.slug}`, "asked");
+    setLoc("prompt");
+    setAsk(true);
+    return () => {
+      if (watchRef.current != null) {
+        navigator.geolocation.clearWatch(watchRef.current);
+        watchRef.current = null;
+      }
+    };
+  }, [event?.slug, event?.locationTracking, event?.lat, event?.lng]);
 
   useEffect(() => {
     if (!slug || !event || event.requireLogin || event.oneResponse === false)
@@ -445,7 +457,7 @@ export function PublicAttendance() {
         )}
       </div>
 
-      {ask && event.locationTracking && (
+      {ask && event.locationTracking && loc !== "inside" && loc !== "outside" && loc !== "locating" && (
         <div className="fixed inset-0 z-40 grid place-items-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="font-display text-xl">Use your location?</h2>
