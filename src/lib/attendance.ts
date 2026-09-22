@@ -8,6 +8,7 @@ const META_KEYS = new Set([
   "excusedAt",
   "excusedNote",
   "formSubmitted",
+  "status",
 ]);
 
 export function parseResponseData(raw: unknown): Record<string, unknown> {
@@ -49,4 +50,35 @@ export function lateAtOf(data: Record<string, unknown> | string | null | undefin
 export function excusedNoteOf(data: Record<string, unknown> | string | null | undefined): string | null {
   const value = parseResponseData(data).excusedNote;
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function applyAttendanceStatus(
+  current: Record<string, unknown>,
+  status: AttendanceStatus,
+  note?: string,
+): Record<string, unknown> {
+  const next = { ...current };
+  const now = new Date().toISOString();
+  if (status === "late") {
+    next.late = true;
+    next.lateAt = typeof next.lateAt === "string" && next.lateAt ? next.lateAt : now;
+    delete next.excused;
+    delete next.excusedAt;
+    delete next.excusedNote;
+  } else if (status === "excused") {
+    next.excused = true;
+    next.excusedAt = now;
+    if (note?.trim()) next.excusedNote = note.trim();
+    else delete next.excusedNote;
+    delete next.late;
+    delete next.lateAt;
+  } else {
+    delete next.late;
+    delete next.lateAt;
+    delete next.excused;
+    delete next.excusedAt;
+    delete next.excusedNote;
+  }
+  next.staffMarked = true;
+  return next;
 }

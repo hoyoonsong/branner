@@ -5,6 +5,7 @@ import { clsx } from "../lib/utils";
 const links = [
   { to: "/attendance", label: "Attendance" },
   { to: "/residents", label: "Residents" },
+  { to: "/birthdays", label: "Birthdays" },
   { to: "/map", label: "Map" },
   { to: "/admins", label: "Admins" },
 ];

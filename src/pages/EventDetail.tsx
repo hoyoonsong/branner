@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
 import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormSchema, type Resident } from "../lib/types";
-import { attendanceStatus, excusedNoteOf, lateAtOf, type AttendanceStatus } from "../lib/attendance";
+import { applyAttendanceStatus, attendanceStatus, excusedNoteOf, lateAtOf, type AttendanceStatus } from "../lib/attendance";
 import { clsx, downloadTextFile, fileSlug, formatCheckIn, formatWhen, fullName, personSearchHay, toCsv } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
@@ -43,9 +43,10 @@ export function EventDetail() {
   const [list, setList] = useState<PeopleFilter>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [peopleError, setPeopleError] = useState("");
+  const savingRef = useRef(false);
 
-  const load = async () => {
-    if (!id) return;
+  const load = async (opts?: { force?: boolean }) => {
+    if (!id || (savingRef.current && !opts?.force)) return;
     const data = await api<{
       event: AttendanceEvent;
       submissions: SubmissionRow[];
@@ -84,57 +85,12 @@ export function EventDetail() {
     setEvent({ ...event, formSchema });
   };
 
-  const markPresent = async (resident: Resident) => {
-    setPeopleError("");
-    setBusyId(resident.id);
-    try {
-      const marked = await fetch(`/api/events/${event.id}/mark-present`, {
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-        body: JSON.stringify({ residentId: resident.id }),
-      });
-      if (!marked.ok) {
-        if (marked.status !== 404 || event.requireLogin) {
-          const data = (await marked.json().catch(() => ({}))) as { error?: string };
-          throw new Error(data.error || marked.statusText);
-        }
-        await api(`/api/public/events/${event.slug}/submit`, {
-          method: "POST",
-          body: JSON.stringify({
-            firstName: resident.firstName,
-            lastName: resident.lastName,
-            answers: { staffMarked: true },
-            lat: event.lat,
-            lng: event.lng,
-            accuracy: 0,
-          }),
-        });
-      }
-      await load();
-    } catch (err) {
-      setPeopleError(err instanceof Error ? err.message : "Could not mark present");
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const setAttendance = async (
-    target: { resident?: Resident; submission?: SubmissionRow },
+  const persistAttendance = async (
+    resident: Resident | undefined,
+    submission: SubmissionRow | undefined,
     status: AttendanceStatus,
+    note: string,
   ) => {
-    const resident = target.resident ?? target.submission?.resident ?? undefined;
-    const submission = target.submission;
-    const id = resident?.id ?? submission?.id;
-    if (!id) return;
-    let note = "";
-    if (status === "excused") {
-      const entered = window.prompt("Optional note for this excused absence", "");
-      if (entered === null) return;
-      note = entered.trim();
-    }
-    setPeopleError("");
-    setBusyId(id);
     try {
       await api(`/api/events/${event.id}/set-status`, {
         method: "POST",
@@ -145,10 +101,108 @@ export function EventDetail() {
           note,
         }),
       });
-      await load();
+      return;
     } catch (err) {
+      if (event.requireLogin || !resident) throw err;
+    }
+
+    if (status === "present") {
+      const marked = await fetch(`/api/events/${event.id}/mark-present`, {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ residentId: resident!.id }),
+      });
+      if (marked.ok) return;
+      if (marked.status !== 404 || event.requireLogin) {
+        const data = (await marked.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || marked.statusText);
+      }
+    }
+
+    const answers: Record<string, unknown> = {
+      staffMarked: true,
+    };
+    if (status === "late") {
+      answers.late = true;
+      answers.lateAt = new Date().toISOString();
+    } else if (status === "excused") {
+      answers.excused = true;
+      if (note) answers.excusedNote = note;
+    }
+    await api(`/api/public/events/${event.slug}/submit`, {
+      method: "POST",
+      body: JSON.stringify({
+        firstName: resident!.firstName,
+        lastName: resident!.lastName,
+        answers,
+        lat: event.lat,
+        lng: event.lng,
+        accuracy: 0,
+      }),
+    });
+  };
+
+  const setAttendance = async (
+    target: { resident?: Resident; submission?: SubmissionRow },
+    status: AttendanceStatus,
+  ) => {
+    const resident = target.resident ?? target.submission?.resident ?? undefined;
+    const submission = target.submission;
+    const id = resident?.id ?? submission?.id;
+    if (!id) {
+      setPeopleError("Could not update attendance for this person.");
+      return;
+    }
+    setPeopleError("");
+    setBusyId(id);
+    savingRef.current = true;
+    const previousSubmissions = submissions;
+    const previousAbsent = absent;
+    const now = new Date().toISOString();
+    const nextData = applyAttendanceStatus(
+      submission?.responseData ?? {},
+      status,
+    );
+    if (resident) {
+      setAbsent((rows) => rows.filter((row) => row.id !== resident.id));
+    }
+    setSubmissions((rows) => {
+      const idx = rows.findIndex(
+        (row) =>
+          (submission && row.id === submission.id) ||
+          Boolean(resident && (row.residentId === resident.id || row.resident?.id === resident.id)),
+      );
+      if (idx >= 0) {
+        const next = [...rows];
+        next[idx] = { ...next[idx], status, responseData: { ...next[idx].responseData, ...nextData } };
+        return next;
+      }
+      if (!resident) return rows;
+      return [
+        ...rows,
+        {
+          id: `tmp-${resident.id}`,
+          createdAt: now,
+          residentId: resident.id,
+          status,
+          distanceM: null,
+          accuracy: null,
+          guestName: fullName(resident),
+          responseData: nextData,
+          resident,
+        },
+      ];
+    });
+    try {
+      await persistAttendance(resident, submission, status, "");
+      await load({ force: true });
+    } catch (err) {
+      setSubmissions(previousSubmissions);
+      setAbsent(previousAbsent);
       setPeopleError(err instanceof Error ? err.message : "Could not update attendance");
     } finally {
+      savingRef.current = false;
       setBusyId(null);
     }
   };
@@ -160,6 +214,7 @@ export function EventDetail() {
     if (!window.confirm(`Delete ${label}'s check-in? This cannot be undone.`)) return;
     setPeopleError("");
     setBusyId(submission.id);
+    savingRef.current = true;
     const previous = submissions;
     setSubmissions((rows) => rows.filter((row) => row.id !== submission.id));
     try {
@@ -167,11 +222,12 @@ export function EventDetail() {
         method: "POST",
         body: JSON.stringify({ submissionId: submission.id }),
       });
-      await load();
+      await load({ force: true });
     } catch (err) {
       setSubmissions(previous);
       setPeopleError(err instanceof Error ? err.message : "Could not delete response");
     } finally {
+      savingRef.current = false;
       setBusyId(null);
     }
   };
@@ -191,6 +247,9 @@ export function EventDetail() {
             <p className="mt-1 text-sm text-stone-mute">
               RAs are not expected and do not appear under Not here. If they check in, they still show as present.
             </p>
+          )}
+          {peopleError && (
+            <p className="mt-3 rounded-xl bg-cardinal/10 px-3 py-2 text-sm text-cardinal">{peopleError}</p>
           )}
         </div>
         <div className="flex gap-2">
@@ -267,7 +326,6 @@ export function EventDetail() {
         onList={setList}
         busyId={busyId}
         error={peopleError}
-        onMarkPresent={markPresent}
         onSetStatus={setAttendance}
         onRemove={removeCheckIn}
       />
@@ -337,7 +395,6 @@ function PeopleLists({
   onList,
   busyId,
   error,
-  onMarkPresent,
   onSetStatus,
   onRemove,
 }: {
@@ -350,7 +407,6 @@ function PeopleLists({
   onList: (v: PeopleFilter) => void;
   busyId: string | null;
   error: string;
-  onMarkPresent: (resident: Resident) => void;
   onSetStatus: (
     target: { resident?: Resident; submission?: SubmissionRow },
     status: AttendanceStatus,
@@ -554,7 +610,11 @@ function PeopleLists({
                   <button
                     type="button"
                     disabled={busyId === r.id}
-                    onClick={() => onMarkPresent(r)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSetStatus({ resident: r }, "present");
+                    }}
                     className="rounded-lg bg-cardinal px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-60"
                   >
                     {busyId === r.id ? "Saving…" : "Present"}
@@ -562,7 +622,11 @@ function PeopleLists({
                   <button
                     type="button"
                     disabled={busyId === r.id}
-                    onClick={() => onSetStatus({ resident: r }, "late")}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSetStatus({ resident: r }, "late");
+                    }}
                     className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-60"
                   >
                     Late
@@ -570,7 +634,11 @@ function PeopleLists({
                   <button
                     type="button"
                     disabled={busyId === r.id}
-                    onClick={() => onSetStatus({ resident: r }, "excused")}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSetStatus({ resident: r }, "excused");
+                    }}
                     className="rounded-lg border border-black/10 bg-white px-2.5 py-1.5 text-xs font-medium disabled:opacity-60"
                   >
                     Excused

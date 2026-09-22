@@ -1,3 +1,5 @@
+import { surveyGivenAliases } from "./survey-aliases.js";
+
 export function normName(s: string): string {
   return s
     .toLowerCase()
@@ -49,14 +51,14 @@ const NICKNAMES: Record<string, string[]> = {
   alexandra: ["alex"],
 };
 
-export function givenNamesCompatible(a: string, b: string): boolean {
+export function givenNamesCompatible(a: string, b: string, allowPrefix = false): boolean {
   const left = nameTokens(a)[0];
   const right = nameTokens(b)[0];
   if (!left || !right) return false;
   if (left === right) return true;
   if ((NICKNAMES[left] ?? []).includes(right)) return true;
   if ((NICKNAMES[right] ?? []).includes(left)) return true;
-  if (left.length >= 4 && right.length >= 4 && (left.startsWith(right) || right.startsWith(left))) {
+  if (allowPrefix && left.length >= 4 && right.length >= 4 && (left.startsWith(right) || right.startsWith(left))) {
     return true;
   }
   return false;
@@ -69,7 +71,7 @@ export function scoreName(query: string, candidate: string): number {
   const lastA = a[a.length - 1];
   const lastB = b[b.length - 1];
   if (lastA !== lastB && !b.includes(lastA) && !a.includes(lastB)) return 0;
-  if (!givenNamesCompatible(a[0], b[0]) && !b.includes(a[0]) && !a.includes(b[0])) return 0;
+  if (!givenNamesCompatible(a[0], b[0], true) && !b.includes(a[0]) && !a.includes(b[0])) return 0;
   const setB = new Set(b);
   let hits = 0;
   for (const t of a) if (setB.has(t)) hits++;
@@ -106,11 +108,50 @@ export function namesOverlap(a: string[], b: string[]): boolean {
   return b.some((n) => set.has(n));
 }
 
+export function givenAliases(person: {
+  firstName?: string | null;
+  lastName?: string | null;
+  legalName?: string | null;
+  email?: string | null;
+}): string[] {
+  const last = lastNameOf(person.lastName ?? "") || lastNameOf(person.legalName ?? "");
+  const aliases = new Set<string>();
+  const add = (token: string | undefined) => {
+    if (!token || token === last || token.length < 2) return;
+    aliases.add(token);
+  };
+  add(nameTokens(person.firstName ?? "")[0]);
+  if (person.legalName) {
+    const legal = nameTokens(person.legalName);
+    for (const token of legal.slice(0, -1)) add(token);
+  }
+  for (const token of surveyGivenAliases(person.email)) add(token);
+  return [...aliases];
+}
+
+export function identityNameKeys(person: {
+  firstName?: string | null;
+  lastName?: string | null;
+  legalName?: string | null;
+  email?: string | null;
+  guestName?: string | null;
+}): string[] {
+  const keys = new Set<string>();
+  const last = lastNameOf(person.lastName ?? "") || lastNameOf(person.legalName ?? "");
+  if (last) {
+    for (const given of givenAliases(person)) keys.add(`${given} ${last}`);
+    if (person.legalName) keys.add(normName(person.legalName));
+  }
+  if (person.guestName) keys.add(normName(person.guestName));
+  const preferred = normName(`${person.firstName ?? ""} ${person.lastName ?? ""}`);
+  if (preferred.split(" ").length >= 2) keys.add(preferred);
+  return [...keys].filter(Boolean);
+}
+
 function firstMatchesPerson(first: string, row: NameResident): boolean {
-  if (givenNamesCompatible(first, row.firstName)) return true;
-  if (!row.legalName) return false;
-  const legal = nameTokens(row.legalName);
-  return legal.slice(0, -1).some((token) => givenNamesCompatible(first, token) || token === nameTokens(first)[0]);
+  const typed = nameTokens(first)[0];
+  if (!typed) return false;
+  return givenAliases(row).some((alias) => givenNamesCompatible(typed, alias));
 }
 
 export function matchResidentByName<T extends NameResident>(
@@ -143,7 +184,6 @@ function emailAgrees(email: string | null | undefined, fileGiven: string[]): boo
   for (const token of fileGiven) {
     if (token.length >= 3 && (local.startsWith(token) || local.includes(token))) return true;
     if (token.length >= 5 && local.includes(token.slice(0, 4))) return true;
-    if (token.length >= 6 && local.startsWith(token.slice(0, 2))) return true;
   }
   const initials = fileGiven.map((token) => token[0]).join("");
   if (initials.length >= 2 && (local.startsWith(initials) || local.includes(initials))) return true;
@@ -160,7 +200,7 @@ export function scorePhotoMatch(fileLabel: string, person: PhotoPerson): number 
 
   const first = nameTokens(person.firstName)[0];
   if (!first) return 0;
-  const firstInFile = fileGiven.some((token) => token === first || givenNamesCompatible(first, token));
+  const firstInFile = fileGiven.some((token) => token === first || givenNamesCompatible(first, token, true));
   const emailHit = emailAgrees(person.email, fileGiven);
   if (!firstInFile && !emailHit) return 0;
 

@@ -437,7 +437,10 @@ export function PublicAttendance() {
                 <input
                   className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
                   value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
+                  onChange={(e) => {
+                    setFirstName(e.target.value);
+                    setDone("");
+                  }}
                   autoComplete="given-name"
                   required
                 />
@@ -447,7 +450,10 @@ export function PublicAttendance() {
                 <input
                   className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
                   value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
+                  onChange={(e) => {
+                    setLastName(e.target.value);
+                    setDone("");
+                  }}
                   autoComplete="family-name"
                   required
                 />

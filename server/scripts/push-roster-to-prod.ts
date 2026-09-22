@@ -49,6 +49,7 @@ async function main() {
         tshirtSize: row.tshirtSize,
         checkIn: row.checkIn,
         earlyArrival: row.earlyArrival,
+        birthday: row.birthday,
         notes: row.notes,
         photoBase64: photoBase64 ?? "",
       };

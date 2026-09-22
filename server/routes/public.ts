@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../prisma.js";
 import { currentIdentity } from "../auth.js";
 import { haversineMeters } from "../geo.js";
-import { matchResidentByName, namesOverlap, personNameKeys } from "../names.js";
+import { identityNameKeys, matchResidentByName, normName } from "../names.js";
 import { attendanceStatus, formWasSubmitted, lateAtOf, parseResponseData } from "../attendance.js";
 
 export const publicRouter = Router();
@@ -22,20 +22,13 @@ publicRouter.get("/events/:slug", async (req, res) => {
   const signedInResident = identity
     ? await prisma.resident.findUnique({ where: { email: identity.email } })
     : null;
-  const namedResident = event.requireLogin
-    ? null
-    : await resolveResident({
-        requireLogin: false,
-        identity: null,
-        firstName,
-        lastName,
-      });
   const existing =
     event.oneResponse !== false
       ? await findExistingCheckIn(
           event.id,
-          event.requireLogin ? signedInResident : namedResident,
-          `${firstName} ${lastName}`.trim(),
+          firstName,
+          lastName,
+          event.requireLogin ? signedInResident?.id : null,
         )
       : null;
   res.json({
@@ -73,12 +66,7 @@ publicRouter.get("/events/:slug", async (req, res) => {
         ? { email: identity.email, name: identity.name, resident: null }
         : null,
     alreadySubmitted: Boolean(existing && formWasSubmitted(existing.responseData)),
-    alreadyAs: existing
-      ? `${firstName} ${lastName}`.trim() ||
-        (existing.resident
-          ? `${existing.resident.firstName} ${existing.resident.lastName}`
-          : existing.guestName)
-      : null,
+    alreadyAs: existing ? checkedInLabel(firstName, lastName, existing) : null,
     markedLate: existing ? attendanceStatus(existing) === "late" : false,
     lateAt: existing ? lateAtOf(existing.responseData) : null,
     googleEnabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
@@ -129,6 +117,11 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
   const accuracyRaw = req.body?.accuracy ?? gps?.accuracy;
   const accuracy = accuracyRaw == null || accuracyRaw === "" ? null : Number(accuracyRaw);
   const answers = req.body?.answers ?? req.body?.responseData ?? {};
+  const answerBag =
+    answers && typeof answers === "object" && !Array.isArray(answers)
+      ? (answers as Record<string, unknown>)
+      : {};
+  const staffOnly = answerBag.staffMarked === true && !formWasSubmitted(answerBag);
 
   if (event.locationTracking) {
     if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) {
@@ -149,17 +142,25 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     }
   }
 
-  const existing = await findExistingCheckIn(event.id, resident, guestName);
+  const existing = await findExistingCheckIn(
+    event.id,
+    firstName,
+    lastName,
+    event.requireLogin ? resident?.id : null,
+  );
   const priorData = parseResponseData(existing?.responseData);
   const priorStatus = existing ? attendanceStatus(existing) : "present";
   const alreadyFilled = existing ? formWasSubmitted(priorData) : false;
   const oneResponse = event.oneResponse !== false;
 
-  if (oneResponse && alreadyFilled) {
-    const who = guestName ||
-      (existing?.resident
-        ? `${existing.resident.firstName} ${existing.resident.lastName}`
-        : existing?.guestName);
+  if (oneResponse && existing && alreadyFilled && !staffOnly) {
+    if (resident && !existing.residentId) {
+      await prisma.submission.update({
+        where: { id: existing.id },
+        data: { residentId: resident.id },
+      });
+    }
+    const who = checkedInLabel(firstName, lastName, existing);
     res.status(409).json({
       error: who
         ? `${who} already checked in for this event`
@@ -172,15 +173,38 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     return;
   }
 
-  const nextStatus = priorStatus === "late" ? "late" : "present";
-  const nextData = {
+  const requested =
+    answerBag.late === true || String(answerBag.status ?? "").toLowerCase() === "late"
+      ? "late"
+      : answerBag.excused === true || String(answerBag.status ?? "").toLowerCase() === "excused"
+        ? "excused"
+        : staffOnly
+          ? "present"
+          : priorStatus === "late" || priorStatus === "excused"
+            ? priorStatus
+            : "present";
+  const nextData: Record<string, unknown> = {
     ...priorData,
-    ...(answers && typeof answers === "object" ? answers : {}),
-    formSubmitted: true,
+    ...answerBag,
+    formSubmitted: staffOnly ? priorData.formSubmitted === true : true,
   };
-  if (nextStatus === "late") {
+  if (requested === "late") {
     nextData.late = true;
-    if (priorData.lateAt) nextData.lateAt = priorData.lateAt;
+    nextData.lateAt =
+      (typeof priorData.lateAt === "string" && priorData.lateAt) ||
+      (typeof answerBag.lateAt === "string" && answerBag.lateAt) ||
+      new Date().toISOString();
+    delete nextData.excused;
+    delete nextData.excusedAt;
+    delete nextData.excusedNote;
+  } else if (requested === "excused") {
+    nextData.excused = true;
+    nextData.excusedAt = new Date().toISOString();
+    if (typeof answerBag.excusedNote === "string" && answerBag.excusedNote.trim()) {
+      nextData.excusedNote = answerBag.excusedNote.trim();
+    }
+    delete nextData.late;
+    delete nextData.lateAt;
   } else {
     delete nextData.late;
     delete nextData.lateAt;
@@ -195,14 +219,17 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     lng,
     accuracy,
     distanceM,
-    status: nextStatus,
+    status: requested,
     guestName: resident ? existing?.guestName ?? null : guestName || null,
   };
 
   const submission = existing
     ? await prisma.submission.update({
         where: { id: existing.id },
-        data: payload,
+        data: {
+          ...payload,
+          ...(resident && !existing.residentId ? { residentId: resident.id } : {}),
+        },
       })
     : resident
       ? await prisma.submission.create({
@@ -224,7 +251,7 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     ok: true,
     submissionId: submission.id,
     distanceM,
-    late: nextStatus === "late",
+    late: requested === "late",
     lateAt: lateAtOf(nextData),
     resident: resident
       ? {
@@ -256,49 +283,73 @@ async function resolveResident({
   }
   if (!firstName && !lastName) return null;
   const roster = await prisma.resident.findMany({
-    select: { id: true, firstName: true, lastName: true, legalName: true },
+    select: { id: true, firstName: true, lastName: true, legalName: true, email: true },
   });
   const matched = matchResidentByName(firstName, lastName, roster);
   return matched ? prisma.resident.findUnique({ where: { id: matched.id } }) : null;
 }
 
+function checkedInLabel(
+  firstName: string,
+  lastName: string,
+  existing: {
+    guestName: string | null;
+    resident: { firstName: string; lastName: string } | null;
+  },
+) {
+  const typed = `${firstName} ${lastName}`.trim();
+  const roster = existing.resident
+    ? `${existing.resident.firstName} ${existing.resident.lastName}`.trim()
+    : "";
+  if (typed && roster && normName(typed) !== normName(roster)) return `${typed} (${roster})`;
+  return typed || roster || existing.guestName || "";
+}
+
 async function findExistingCheckIn(
   eventId: string,
-  resident: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    legalName: string | null;
-  } | null,
-  guestName: string,
+  firstName: string,
+  lastName: string,
+  loginResidentId?: string | null,
 ) {
-  const wanted = personNameKeys({
-    firstName: resident?.firstName,
-    lastName: resident?.lastName,
-    legalName: resident?.legalName,
-    guestName,
-  });
-  if (!resident && !wanted.length) return null;
+  const typed = normName(`${firstName} ${lastName}`);
+  const roster = typed
+    ? await prisma.resident.findMany({
+        select: { id: true, firstName: true, lastName: true, legalName: true, email: true },
+      })
+    : [];
+  const matched = typed ? matchResidentByName(firstName, lastName, roster) : null;
+  const wanted = new Set<string>();
+  if (typed) wanted.add(typed);
+  if (matched) for (const key of identityNameKeys(matched)) wanted.add(key);
+
   const rows = await prisma.submission.findMany({
     where: { eventId },
     include: {
-      resident: { select: { id: true, firstName: true, lastName: true, legalName: true } },
+      resident: { select: { id: true, firstName: true, lastName: true, legalName: true, email: true } },
     },
   });
-  return (
+  const found =
     rows.find((row) => {
-      if (resident && row.residentId === resident.id) return true;
-      return namesOverlap(
-        wanted,
-        personNameKeys({
-          firstName: row.resident?.firstName,
-          lastName: row.resident?.lastName,
-          legalName: row.resident?.legalName,
-          guestName: row.guestName,
-        }),
-      );
-    }) ?? null
-  );
+      if (loginResidentId && row.residentId === loginResidentId) return true;
+      if (!wanted.size) return false;
+      const keys = identityNameKeys({
+        firstName: row.resident?.firstName,
+        lastName: row.resident?.lastName,
+        legalName: row.resident?.legalName,
+        email: row.resident?.email,
+        guestName: row.guestName,
+      });
+      return keys.some((key) => wanted.has(key));
+    }) ?? null;
+  if (found && matched && !found.residentId) {
+    await prisma.submission.update({
+      where: { id: found.id },
+      data: { residentId: matched.id },
+    });
+    found.residentId = matched.id;
+    found.resident = matched;
+  }
+  return found;
 }
 
 async function upsertGuestSubmission(
@@ -314,7 +365,8 @@ async function upsertGuestSubmission(
     guestName: string | null;
   },
 ) {
-  const prior = await findExistingCheckIn(eventId, null, guestName);
+  const parts = guestName.trim().split(/\s+/).filter(Boolean);
+  const prior = await findExistingCheckIn(eventId, parts[0] ?? "", parts.slice(1).join(" "));
   if (prior) {
     return prisma.submission.update({
       where: { id: prior.id },

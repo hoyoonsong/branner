@@ -209,6 +209,7 @@ export type Resident = {
   checkIn: string | null;
   earlyArrival: string | null;
   photoPath: string | null;
+  birthday?: string | null;
   notes: string;
 };
 

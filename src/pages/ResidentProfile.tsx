@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
+import { birthdayFor, formatBirthday, parseBirthday } from "../lib/birthday";
 import { isRa, type Resident } from "../lib/types";
 import { clsx, fullName } from "../lib/utils";
 import { Avatar, RaBadge } from "./Residents";
@@ -56,6 +57,13 @@ export function ResidentProfile() {
         </div>
       </div>
       <dl className="mt-6 grid gap-3 rounded-2xl bg-white p-6 text-sm shadow-sm sm:grid-cols-2">
+        <Item
+          k="Birthday"
+          v={(() => {
+            const parsed = parseBirthday(birthdayFor(resident));
+            return parsed ? formatBirthday(parsed) : null;
+          })()}
+        />
         <Item k="Hometown" v={resident.hometown} />
         <Item k="Country" v={resident.country} />
         <Item k="Phone" v={resident.phone} />

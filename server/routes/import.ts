@@ -27,6 +27,7 @@ type IncomingResident = {
   earlyArrival?: string | null;
   notes?: string;
   photoBase64?: string | null;
+  birthday?: string | null;
 };
 
 function authorize(req: { get(name: string): string | undefined }, res: { status: (n: number) => { json: (b: unknown) => void } }): boolean {
@@ -86,6 +87,7 @@ importRouter.post("/roster", async (req, res) => {
         tshirtSize: row.tshirtSize ?? null,
         checkIn: row.checkIn ?? null,
         earlyArrival: row.earlyArrival ?? null,
+        birthday: row.birthday ?? null,
         notes: row.notes || "",
         photoPath: photoPath ?? null,
       },
@@ -108,6 +110,7 @@ importRouter.post("/roster", async (req, res) => {
         checkIn: row.checkIn,
         earlyArrival: row.earlyArrival,
         notes: row.notes,
+        ...(row.birthday !== undefined ? { birthday: row.birthday } : {}),
         ...(photoPath !== undefined ? { photoPath } : {}),
       },
     });

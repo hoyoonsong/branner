@@ -8,6 +8,7 @@ const META_KEYS = new Set([
   "excusedAt",
   "excusedNote",
   "formSubmitted",
+  "status",
 ]);
 
 export function parseResponseData(raw: unknown): Record<string, unknown> {

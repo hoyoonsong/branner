@@ -18,6 +18,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "import:roster": "tsx server/scripts/import-roster.ts",
     "import:ra-photos": "tsx server/scripts/import-ra-photos.ts",
+    "import:bramily-photos": "tsx server/scripts/rematch-bramily-photos.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
