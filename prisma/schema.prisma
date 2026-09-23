@@ -63,6 +63,9 @@ model Event {
   locationTracking Boolean   @default(true)
   houseMeeting     Boolean?
   oneResponse      Boolean   @default(true)
+  acceptingResponses Boolean @default(true)
+  responsesOpenAt  DateTime?
+  responsesCloseAt DateTime?
   lat              Float?
   lng              Float?
   radiusMeters     Int       @default(80)
@@ -85,6 +88,7 @@ model Submission {
   lng          Float?
   accuracy     Float?
   distanceM    Float?
+  selfiePath   String?
   status       String    @default("present")
   createdAt    DateTime  @default(now())
 

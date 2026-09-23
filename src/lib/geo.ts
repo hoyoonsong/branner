@@ -17,6 +17,15 @@ export function haversineMeters(
 export const BRANNER_LAT = 37.4274;
 export const BRANNER_LNG = -122.1647;
 
+/** Indoor phones often report tens of meters of error. Don't reject a fix that could still be inside the event. */
+const GPS_SLACK_CAP_M = 150;
+
+export function isNearEvent(distanceM: number, radiusM: number, accuracyM?: number | null): boolean {
+  const accuracy = accuracyM != null && Number.isFinite(accuracyM) ? Math.max(0, accuracyM) : 80;
+  const slack = Math.min(accuracy, GPS_SLACK_CAP_M);
+  return distanceM <= radiusM + slack;
+}
+
 export function destinationPoint(
   lat: number,
   lng: number,

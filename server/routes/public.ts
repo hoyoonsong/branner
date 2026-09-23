@@ -1,9 +1,20 @@
 import { Router } from "express";
+import { mkdirSync, writeFileSync } from "fs";
+import path from "path";
+import { randomBytes } from "crypto";
 import { prisma } from "../prisma.js";
+import { uploadsDir } from "../runtime.js";
 import { currentIdentity } from "../auth.js";
-import { haversineMeters } from "../geo.js";
+import { haversineMeters, isNearEvent } from "../geo.js";
 import { identityNameKeys, matchResidentByName, normName } from "../names.js";
-import { attendanceStatus, formWasSubmitted, lateAtOf, parseResponseData } from "../attendance.js";
+import {
+  attendanceStatus,
+  formWasSubmitted,
+  lateAtOf,
+  parseResponseData,
+  submissionClosedMessage,
+  submissionWindow,
+} from "../attendance.js";
 
 export const publicRouter = Router();
 
@@ -42,6 +53,10 @@ publicRouter.get("/events/:slug", async (req, res) => {
       locationTracking: event.locationTracking,
       houseMeeting: event.houseMeeting,
       oneResponse: event.oneResponse !== false,
+      acceptingResponses: event.acceptingResponses !== false,
+      responsesOpenAt: event.responsesOpenAt,
+      responsesCloseAt: event.responsesCloseAt,
+      submissionsOpen: submissionWindow(event).open,
       lat: event.lat,
       lng: event.lng,
       radiusMeters: event.radiusMeters,
@@ -123,22 +138,27 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
       : {};
   const staffOnly = answerBag.staffMarked === true && !formWasSubmitted(answerBag);
 
-  if (event.locationTracking) {
+  if (!staffOnly && !submissionWindow(event).open) {
+    res.status(403).json({ error: submissionClosedMessage(event) });
+    return;
+  }
+
+  const locationUnavailable = req.body?.locationUnavailable === true;
+  if (event.locationTracking && event.lat != null && event.lng != null) {
     if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) {
-      res.status(400).json({ error: "Location required" });
-      return;
-    }
-    if (event.lat == null || event.lng == null) {
-      res.status(400).json({ error: "Event location is not set" });
-      return;
-    }
-    distanceM = haversineMeters(lat, lng, event.lat, event.lng);
-    if (distanceM > event.radiusMeters) {
-      res.status(400).json({
-        error: `Too far from the event (${Math.round(distanceM)} m, need ${event.radiusMeters} m)`,
-        distanceM,
-      });
-      return;
+      if (!locationUnavailable) {
+        res.status(400).json({ error: "Location required" });
+        return;
+      }
+    } else {
+      distanceM = haversineMeters(lat, lng, event.lat, event.lng);
+      if (!isNearEvent(distanceM, event.radiusMeters, accuracy)) {
+        res.status(400).json({
+          error: `Too far from the event (${Math.round(distanceM)} m, need ${event.radiusMeters} m)`,
+          distanceM,
+        });
+        return;
+      }
     }
   }
 
@@ -188,6 +208,8 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     ...answerBag,
     formSubmitted: staffOnly ? priorData.formSubmitted === true : true,
   };
+  if (locationUnavailable && (lat == null || lng == null)) nextData.locationUnavailable = true;
+  else delete nextData.locationUnavailable;
   if (requested === "late") {
     nextData.late = true;
     nextData.lateAt =
@@ -213,6 +235,23 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     delete nextData.excusedNote;
   }
 
+  const needsSelfie =
+    event.locationTracking &&
+    event.lat != null &&
+    event.lng != null &&
+    locationUnavailable &&
+    (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) &&
+    !staffOnly;
+  let selfiePath: string | undefined;
+  if (needsSelfie) {
+    const saved = saveCheckInSelfie(req.body?.selfie);
+    if (saved) selfiePath = saved;
+    else if (!existing?.selfiePath) {
+      res.status(400).json({ error: "Take a selfie at the meeting" });
+      return;
+    }
+  }
+
   const payload = {
     responseData: JSON.stringify(nextData),
     lat,
@@ -221,6 +260,7 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     distanceM,
     status: requested,
     guestName: resident ? existing?.guestName ?? null : guestName || null,
+    ...(selfiePath ? { selfiePath } : {}),
   };
 
   const submission = existing
@@ -265,6 +305,20 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     guestName: resident ? null : guestName,
   });
 });
+
+function saveCheckInSelfie(selfie: unknown): string | null {
+  if (typeof selfie !== "string") return null;
+  const match = selfie.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) return null;
+  const buf = Buffer.from(match[1].replace(/\s/g, ""), "base64");
+  if (buf.length < 200 || buf.length > 1_500_000) return null;
+  if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  const destDir = path.join(uploadsDir(), "checkins");
+  mkdirSync(destDir, { recursive: true });
+  const name = `${randomBytes(16).toString("hex")}.jpg`;
+  writeFileSync(path.join(destDir, name), buf);
+  return `/uploads/checkins/${name}`;
+}
 
 async function resolveResident({
   requireLogin,

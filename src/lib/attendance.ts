@@ -82,3 +82,27 @@ export function applyAttendanceStatus(
   next.staffMarked = true;
   return next;
 }
+
+export type SubmissionWindowReason = "paused" | "not_yet" | "ended";
+
+export function submissionWindow(
+  event: {
+    acceptingResponses?: boolean | null;
+    responsesOpenAt?: string | Date | null;
+    responsesCloseAt?: string | Date | null;
+  },
+  now = new Date(),
+): { open: boolean; reason: SubmissionWindowReason | null } {
+  if (event.acceptingResponses === false) return { open: false, reason: "paused" };
+  const openAt = timeOf(event.responsesOpenAt);
+  const closeAt = timeOf(event.responsesCloseAt);
+  if (openAt && now < openAt) return { open: false, reason: "not_yet" };
+  if (closeAt && now > closeAt) return { open: false, reason: "ended" };
+  return { open: true, reason: null };
+}
+
+function timeOf(value: string | Date | null | undefined): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}

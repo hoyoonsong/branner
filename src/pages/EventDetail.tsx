@@ -3,8 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
 import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormSchema, type Resident } from "../lib/types";
-import { applyAttendanceStatus, attendanceStatus, excusedNoteOf, lateAtOf, type AttendanceStatus } from "../lib/attendance";
-import { clsx, downloadTextFile, fileSlug, formatCheckIn, formatWhen, fullName, personSearchHay, toCsv } from "../lib/utils";
+import { applyAttendanceStatus, attendanceStatus, excusedNoteOf, lateAtOf, submissionWindow, type AttendanceStatus } from "../lib/attendance";
+import { clsx, downloadTextFile, fileSlug, formatCheckIn, formatWhen, fromDatetimeLocal, fullName, personSearchHay, toCsv, toDatetimeLocal } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
 import { BRANNER_LAT, BRANNER_LNG } from "../lib/geo";
@@ -17,6 +17,7 @@ type SubmissionRow = {
   status?: string | null;
   distanceM: number | null;
   accuracy: number | null;
+  selfiePath?: string | null;
   guestName: string | null;
   responseData: Record<string, unknown>;
   resident: Resident | null;
@@ -207,6 +208,24 @@ export function EventDetail() {
     }
   };
 
+  const setAccepting = async (next: boolean) => {
+    setPeopleError("");
+    savingRef.current = true;
+    const previous = event.acceptingResponses;
+    setEvent({ ...event, acceptingResponses: next });
+    try {
+      await api(`/api/events/${event.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ acceptingResponses: next }),
+      });
+    } catch (err) {
+      setEvent({ ...event, acceptingResponses: previous });
+      setPeopleError(err instanceof Error ? err.message : "Could not update check-in");
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
   const removeCheckIn = async (submission: SubmissionRow) => {
     const label = submission.resident
       ? fullName(submission.resident)
@@ -243,6 +262,7 @@ export function EventDetail() {
           <p className="text-stone-mute">
             {event.eventType?.label} · {formatWhen(event.startsAt)}
           </p>
+          <p className="mt-1 text-sm text-stone-mute">{responseWindowCopy(event)}</p>
           {eventIsHouseMeeting(event) && (
             <p className="mt-1 text-sm text-stone-mute">
               RAs are not expected and do not appear under Not here. If they check in, they still show as present.
@@ -252,7 +272,15 @@ export function EventDetail() {
             <p className="mt-3 rounded-xl bg-cardinal/10 px-3 py-2 text-sm text-cardinal">{peopleError}</p>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              checked={event.acceptingResponses !== false}
+              onChange={(e) => void setAccepting(e.target.checked)}
+            />
+            Accepting responses
+          </label>
           <button
             type="button"
             onClick={() => setSettings(true)}
@@ -750,9 +778,16 @@ function PresentRow({
         <div className="flex min-w-0 flex-1 items-center gap-3">{person}</div>
       )}
       <div className="shrink-0 text-right text-xs text-stone-mute">
+        {s.selfiePath && (
+          <a href={s.selfiePath} target="_blank" rel="noreferrer" className="mb-1 inline-block">
+            <img src={s.selfiePath} alt="Check-in selfie" className="h-12 w-12 rounded-lg object-cover" />
+          </a>
+        )}
         <p>{formatCheckIn(s.createdAt)}</p>
         {staffMarked ? (
           <p>No GPS</p>
+        ) : s.responseData?.locationUnavailable ? (
+          <p>Location not shared</p>
         ) : (
           <>
             {s.distanceM != null && <p>{Math.round(s.distanceM)} m away</p>}
@@ -1011,6 +1046,10 @@ function EventSettingsModal({
   const [newType, setNewType] = useState("");
   const [locationTracking, setLocationTracking] = useState(event.locationTracking);
   const [oneResponse, setOneResponse] = useState(event.oneResponse !== false);
+  const [acceptingResponses, setAcceptingResponses] = useState(event.acceptingResponses !== false);
+  const [limitWindow, setLimitWindow] = useState(Boolean(event.responsesOpenAt || event.responsesCloseAt));
+  const [responsesOpenAt, setResponsesOpenAt] = useState(toDatetimeLocal(event.responsesOpenAt));
+  const [responsesCloseAt, setResponsesCloseAt] = useState(toDatetimeLocal(event.responsesCloseAt));
   const [lat, setLat] = useState(event.lat ?? BRANNER_LAT);
   const [lng, setLng] = useState(event.lng ?? BRANNER_LNG);
   const [radiusMeters, setRadiusMeters] = useState(event.radiusMeters || 80);
@@ -1046,11 +1085,21 @@ function EventSettingsModal({
   const save = async () => {
     setSaving(true);
     setError("");
+    const openAt = limitWindow ? fromDatetimeLocal(responsesOpenAt) : null;
+    const closeAt = limitWindow ? fromDatetimeLocal(responsesCloseAt) : null;
+    if (openAt && closeAt && new Date(closeAt) <= new Date(openAt)) {
+      setError("Close time has to be after the open time.");
+      setSaving(false);
+      return;
+    }
     const payload = {
       eventTypeId,
       houseMeeting,
       locationTracking,
       oneResponse,
+      acceptingResponses,
+      responsesOpenAt: openAt,
+      responsesCloseAt: closeAt,
       lat: locationTracking ? lat : null,
       lng: locationTracking ? lng : null,
       radiusMeters: locationTracking ? radiusMeters : event.radiusMeters,
@@ -1082,6 +1131,9 @@ function EventSettingsModal({
         houseMeeting: next.houseMeeting ?? houseMeeting,
         locationTracking: next.locationTracking,
         oneResponse: next.oneResponse ?? oneResponse,
+        acceptingResponses: next.acceptingResponses !== false,
+        responsesOpenAt: next.responsesOpenAt ?? null,
+        responsesCloseAt: next.responsesCloseAt ?? null,
         lat: next.lat,
         lng: next.lng,
         radiusMeters: next.radiusMeters,
@@ -1129,6 +1181,56 @@ function EventSettingsModal({
           <input
             type="checkbox"
             className="mt-0.5"
+            checked={acceptingResponses}
+            onChange={(e) => setAcceptingResponses(e.target.checked)}
+          />
+          <span>
+            Accepting responses
+            <span className="block text-xs text-stone-mute">
+              People can check in and submit the form. Turn this off to pause it immediately.
+            </span>
+          </span>
+        </label>
+        <label className="mt-4 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={limitWindow}
+            onChange={(e) => setLimitWindow(e.target.checked)}
+          />
+          <span>
+            Only during a set time
+            <span className="block text-xs text-stone-mute">
+              Outside this window the form stays closed, even if responses are on.
+            </span>
+          </span>
+        </label>
+        {limitWindow && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm">
+              Opens
+              <input
+                type="datetime-local"
+                className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
+                value={responsesOpenAt}
+                onChange={(e) => setResponsesOpenAt(e.target.value)}
+              />
+            </label>
+            <label className="block text-sm">
+              Closes
+              <input
+                type="datetime-local"
+                className="mt-1 w-full rounded-lg border border-black/10 px-3 py-2 text-sm"
+                value={responsesCloseAt}
+                onChange={(e) => setResponsesCloseAt(e.target.value)}
+              />
+            </label>
+          </div>
+        )}
+        <label className="mt-4 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
             checked={oneResponse}
             onChange={(e) => setOneResponse(e.target.checked)}
           />
@@ -1150,6 +1252,9 @@ function EventSettingsModal({
             Location tracking
             <span className="block text-xs text-stone-mute">
               Respondents must be inside the check-in area to submit.
+              {locationTracking
+                ? " If a phone can't share location, they take a selfie at the meeting instead."
+                : ""}
             </span>
           </span>
         </label>
@@ -1184,6 +1289,19 @@ function EventSettingsModal({
       </div>
     </div>
   );
+}
+
+function responseWindowCopy(event: AttendanceEvent): string {
+  const gate = submissionWindow(event);
+  const open = event.responsesOpenAt ? formatWhen(event.responsesOpenAt) : "";
+  const close = event.responsesCloseAt ? formatWhen(event.responsesCloseAt) : "";
+  const range = open && close ? `${open} – ${close}` : open ? `from ${open}` : close ? `until ${close}` : "";
+  if (gate.reason === "paused") {
+    return range ? `Responses paused. Window is ${range}.` : "Responses paused. People cannot check in or submit the form.";
+  }
+  if (gate.reason === "not_yet" && open) return `Check-in opens ${open}.`;
+  if (gate.reason === "ended" && close) return `Check-in closed ${close}.`;
+  return range ? `People can submit ${range}.` : "People can check in and submit the form.";
 }
 
 function Stat({ label, value }: { label: string; value: number }) {

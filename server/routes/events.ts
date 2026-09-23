@@ -285,6 +285,9 @@ eventsRouter.post("/", async (req, res) => {
       locationTracking,
       houseMeeting,
       oneResponse: req.body?.oneResponse !== false,
+      acceptingResponses: req.body?.acceptingResponses !== false,
+      responsesOpenAt: req.body?.responsesOpenAt ? new Date(req.body.responsesOpenAt) : null,
+      responsesCloseAt: req.body?.responsesCloseAt ? new Date(req.body.responsesCloseAt) : null,
       lat: locationTracking ? Number(req.body?.lat ?? BRANNER_LAT) : null,
       lng: locationTracking ? Number(req.body?.lng ?? BRANNER_LNG) : null,
       radiusMeters: locationTracking ? Number(req.body?.radiusMeters ?? 80) : 80,
@@ -316,6 +319,12 @@ eventsRouter.patch("/:id", async (req, res) => {
     data.locationTracking = Boolean(req.body.locationTracking);
   if (req.body.houseMeeting != null) data.houseMeeting = Boolean(req.body.houseMeeting);
   if (req.body.oneResponse != null) data.oneResponse = Boolean(req.body.oneResponse);
+  if (req.body.acceptingResponses != null)
+    data.acceptingResponses = Boolean(req.body.acceptingResponses);
+  if (req.body.responsesOpenAt !== undefined)
+    data.responsesOpenAt = req.body.responsesOpenAt ? new Date(req.body.responsesOpenAt) : null;
+  if (req.body.responsesCloseAt !== undefined)
+    data.responsesCloseAt = req.body.responsesCloseAt ? new Date(req.body.responsesCloseAt) : null;
   if (req.body.lat !== undefined) data.lat = req.body.lat == null || req.body.lat === "" ? null : Number(req.body.lat);
   if (req.body.lng !== undefined) data.lng = req.body.lng == null || req.body.lng === "" ? null : Number(req.body.lng);
   if (req.body.radiusMeters != null) data.radiusMeters = Number(req.body.radiusMeters);

@@ -248,6 +248,9 @@ export type AttendanceEvent = {
   locationTracking: boolean;
   houseMeeting?: boolean | null;
   oneResponse?: boolean;
+  acceptingResponses?: boolean;
+  responsesOpenAt?: string | null;
+  responsesCloseAt?: string | null;
   lat: number | null;
   lng: number | null;
   radiusMeters: number;
