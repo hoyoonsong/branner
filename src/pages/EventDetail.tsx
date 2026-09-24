@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
 import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormSchema, type Resident } from "../lib/types";
-import { applyAttendanceStatus, attendanceStatus, excusedNoteOf, lateAtOf, submissionWindow, type AttendanceStatus } from "../lib/attendance";
+import { applyAttendanceStatus, attendanceStatus, excusedNoteOf, lateAtOf, responseGateOf, submissionWindow, withResponseGate, type AttendanceStatus } from "../lib/attendance";
 import { clsx, downloadTextFile, fileSlug, formatCheckIn, formatWhen, fromDatetimeLocal, fullName, personSearchHay, toCsv, toDatetimeLocal } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
@@ -45,16 +45,21 @@ export function EventDetail() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [peopleError, setPeopleError] = useState("");
   const savingRef = useRef(false);
+  const revision = useRef(0);
 
   const load = async (opts?: { force?: boolean }) => {
-    if (!id || (savingRef.current && !opts?.force)) return;
+    if (!id) return;
+    const rev = revision.current;
+    if (savingRef.current && !opts?.force) return;
     const data = await api<{
       event: AttendanceEvent;
       submissions: SubmissionRow[];
       absent: Resident[];
       analytics: NonNullable<typeof analytics>;
     }>(`/api/events/${id}`);
-    setEvent(data.event);
+    if (rev !== revision.current) return;
+    if (savingRef.current && !opts?.force) return;
+    setEvent(withResponseGate(data.event));
     setSubmissions(data.submissions);
     setAbsent(data.absent);
     setAnalytics(data.analytics);
@@ -79,11 +84,12 @@ export function EventDetail() {
   if (!event || !analytics) return <p className="text-stone-mute">Loading…</p>;
 
   const saveSchema = async (formSchema: FormSchema) => {
+    const next = { ...formSchema, responseGate: event.formSchema.responseGate };
     await api(`/api/events/${event.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ formSchema }),
+      body: JSON.stringify({ formSchema: next }),
     });
-    setEvent({ ...event, formSchema });
+    setEvent({ ...event, formSchema: next });
   };
 
   const persistAttendance = async (
@@ -209,20 +215,40 @@ export function EventDetail() {
   };
 
   const setAccepting = async (next: boolean) => {
+    const previous = event;
+    const rev = ++revision.current;
     setPeopleError("");
     savingRef.current = true;
-    const previous = event.acceptingResponses;
-    setEvent({ ...event, acceptingResponses: next });
+    const formSchema = {
+      ...event.formSchema,
+      responseGate: {
+        acceptingResponses: next,
+        responsesOpenAt: event.responsesOpenAt ?? null,
+        responsesCloseAt: event.responsesCloseAt ?? null,
+      },
+    };
+    setEvent({ ...event, acceptingResponses: next, formSchema });
     try {
-      await api(`/api/events/${event.id}`, {
+      const data = await api<{ event: AttendanceEvent }>(`/api/events/${event.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ acceptingResponses: next }),
+        body: JSON.stringify({
+          acceptingResponses: next,
+          responsesOpenAt: event.responsesOpenAt ?? null,
+          responsesCloseAt: event.responsesCloseAt ?? null,
+          formSchema,
+        }),
       });
+      if (rev !== revision.current) return;
+      const saved = withResponseGate(data.event);
+      if (saved.acceptingResponses !== next) {
+        throw new Error("Could not save whether responses are open.");
+      }
+      setEvent(saved);
     } catch (err) {
-      setEvent({ ...event, acceptingResponses: previous });
+      if (rev === revision.current) setEvent(previous);
       setPeopleError(err instanceof Error ? err.message : "Could not update check-in");
     } finally {
-      savingRef.current = false;
+      if (rev === revision.current) savingRef.current = false;
     }
   };
 
@@ -378,7 +404,16 @@ export function EventDetail() {
           status="published"
           submissions={submissions}
           onDeleteSubmission={removeCheckIn}
-          onChange={(schema) => setEvent({ ...event, formSchema: schema })}
+          onChange={(schema) =>
+            setEvent((current) =>
+              current
+                ? {
+                    ...current,
+                    formSchema: { ...schema, responseGate: current.formSchema.responseGate },
+                  }
+                : current,
+            )
+          }
           onSave={saveSchema}
           onMetaChange={async (meta) => {
             await api(`/api/events/${event.id}`, {
@@ -1100,6 +1135,14 @@ function EventSettingsModal({
       acceptingResponses,
       responsesOpenAt: openAt,
       responsesCloseAt: closeAt,
+      formSchema: {
+        ...event.formSchema,
+        responseGate: {
+          acceptingResponses,
+          responsesOpenAt: openAt,
+          responsesCloseAt: closeAt,
+        },
+      },
       lat: locationTracking ? lat : null,
       lng: locationTracking ? lng : null,
       radiusMeters: locationTracking ? radiusMeters : event.radiusMeters,
@@ -1131,9 +1174,7 @@ function EventSettingsModal({
         houseMeeting: next.houseMeeting ?? houseMeeting,
         locationTracking: next.locationTracking,
         oneResponse: next.oneResponse ?? oneResponse,
-        acceptingResponses: next.acceptingResponses !== false,
-        responsesOpenAt: next.responsesOpenAt ?? null,
-        responsesCloseAt: next.responsesCloseAt ?? null,
+        ...responseGateOf(next),
         lat: next.lat,
         lng: next.lng,
         radiusMeters: next.radiusMeters,

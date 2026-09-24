@@ -120,8 +120,15 @@ export interface FormField {
   branches?: ConditionalBranch[];
 }
 
+export interface ResponseGate {
+  acceptingResponses?: boolean;
+  responsesOpenAt?: string | null;
+  responsesCloseAt?: string | null;
+}
+
 export interface FormSchema {
   fields: FormField[];
+  responseGate?: ResponseGate;
 }
 
 export const NON_INPUT_TYPES: FieldType[] = ["heading", "conditional"];

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
 import { randomBytes } from "crypto";
@@ -12,6 +12,7 @@ import {
   formWasSubmitted,
   lateAtOf,
   parseResponseData,
+  responseGateOf,
   submissionClosedMessage,
   submissionWindow,
 } from "../attendance.js";
@@ -33,15 +34,18 @@ publicRouter.get("/events/:slug", async (req, res) => {
   const signedInResident = identity
     ? await prisma.resident.findUnique({ where: { email: identity.email } })
     : null;
+  const oneResponse = event.oneResponse !== false;
+  const browserCheckIn = oneResponse ? await checkInFromBrowser(req, event.id) : null;
   const existing =
-    event.oneResponse !== false
+    browserCheckIn ??
+    (oneResponse
       ? await findExistingCheckIn(
           event.id,
           firstName,
           lastName,
           event.requireLogin ? signedInResident?.id : null,
         )
-      : null;
+      : null);
   res.json({
     event: {
       id: event.id,
@@ -53,10 +57,8 @@ publicRouter.get("/events/:slug", async (req, res) => {
       locationTracking: event.locationTracking,
       houseMeeting: event.houseMeeting,
       oneResponse: event.oneResponse !== false,
-      acceptingResponses: event.acceptingResponses !== false,
-      responsesOpenAt: event.responsesOpenAt,
-      responsesCloseAt: event.responsesCloseAt,
-      submissionsOpen: submissionWindow(event).open,
+      ...responseGateOf(event),
+      submissionsOpen: submissionWindow(responseGateOf(event)).open,
       lat: event.lat,
       lng: event.lng,
       radiusMeters: event.radiusMeters,
@@ -81,7 +83,9 @@ publicRouter.get("/events/:slug", async (req, res) => {
         ? { email: identity.email, name: identity.name, resident: null }
         : null,
     alreadySubmitted: Boolean(existing && formWasSubmitted(existing.responseData)),
-    alreadyAs: existing ? checkedInLabel(firstName, lastName, existing) : null,
+    alreadyAs: existing
+      ? checkedInLabel(browserCheckIn ? "" : firstName, browserCheckIn ? "" : lastName, existing)
+      : null,
     markedLate: existing ? attendanceStatus(existing) === "late" : false,
     lateAt: existing ? lateAtOf(existing.responseData) : null,
     googleEnabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
@@ -138,8 +142,9 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
       : {};
   const staffOnly = answerBag.staffMarked === true && !formWasSubmitted(answerBag);
 
-  if (!staffOnly && !submissionWindow(event).open) {
-    res.status(403).json({ error: submissionClosedMessage(event) });
+  const responseGate = responseGateOf(event);
+  if (!staffOnly && !submissionWindow(responseGate).open) {
+    res.status(403).json({ error: submissionClosedMessage(responseGate) });
     return;
   }
 
@@ -162,25 +167,33 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
     }
   }
 
-  const existing = await findExistingCheckIn(
-    event.id,
-    firstName,
-    lastName,
-    event.requireLogin ? resident?.id : null,
-  );
+  const browserCheckIn =
+    event.oneResponse !== false ? await checkInFromBrowser(req, event.id) : null;
+  const existing =
+    browserCheckIn ??
+    (await findExistingCheckIn(
+      event.id,
+      firstName,
+      lastName,
+      event.requireLogin ? resident?.id : null,
+    ));
   const priorData = parseResponseData(existing?.responseData);
   const priorStatus = existing ? attendanceStatus(existing) : "present";
   const alreadyFilled = existing ? formWasSubmitted(priorData) : false;
   const oneResponse = event.oneResponse !== false;
 
   if (oneResponse && existing && alreadyFilled && !staffOnly) {
-    if (resident && !existing.residentId) {
+    if (resident && !existing.residentId && !browserCheckIn) {
       await prisma.submission.update({
         where: { id: existing.id },
         data: { residentId: resident.id },
       });
     }
-    const who = checkedInLabel(firstName, lastName, existing);
+    const who = checkedInLabel(
+      browserCheckIn ? "" : firstName,
+      browserCheckIn ? "" : lastName,
+      existing,
+    );
     res.status(409).json({
       error: who
         ? `${who} already checked in for this event`
@@ -287,6 +300,7 @@ publicRouter.post("/events/:slug/submit", async (req, res) => {
           },
         });
 
+  if (oneResponse && !staffOnly) rememberBrowserCheckIn(res, event.id, submission.id);
   res.json({
     ok: true,
     submissionId: submission.id,
@@ -341,6 +355,43 @@ async function resolveResident({
   });
   const matched = matchResidentByName(firstName, lastName, roster);
   return matched ? prisma.resident.findUnique({ where: { id: matched.id } }) : null;
+}
+
+function checkInCookieName(eventId: string) {
+  return `branner_checkin_${eventId}`;
+}
+
+function readCookie(req: Request, name: string): string | null {
+  const raw = req.headers.cookie ?? "";
+  for (const part of raw.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
+function rememberBrowserCheckIn(res: Response, eventId: string, submissionId: string) {
+  const secure = process.env.NODE_ENV === "production";
+  res.cookie(checkInCookieName(eventId), submissionId, {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 14 * 24 * 60 * 60 * 1000,
+    secure,
+    path: "/",
+  });
+}
+
+async function checkInFromBrowser(req: Request, eventId: string) {
+  const id = readCookie(req, checkInCookieName(eventId));
+  if (!id) return null;
+  const row = await prisma.submission.findFirst({
+    where: { id, eventId },
+    include: {
+      resident: { select: { id: true, firstName: true, lastName: true, legalName: true, email: true } },
+    },
+  });
+  if (!row || !formWasSubmitted(row.responseData)) return null;
+  return row;
 }
 
 function checkedInLabel(

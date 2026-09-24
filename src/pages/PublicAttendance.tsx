@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../lib/api";
-import { submissionWindow } from "../lib/attendance";
+import { submissionWindow, withResponseGate } from "../lib/attendance";
 import type { FormSchema } from "../lib/types";
 import { formatWhen } from "../lib/utils";
 import { FormRenderer } from "../components/FormRenderer";
@@ -61,6 +61,26 @@ async function requestBestFix(): Promise<GeolocationPosition> {
   }
 }
 
+function stored(key: string): string | null {
+  try {
+    const kept = localStorage.getItem(key);
+    if (kept != null) return kept;
+    const prior = sessionStorage.getItem(key);
+    if (prior != null) localStorage.setItem(key, prior);
+    return prior;
+  } catch {
+    return null;
+  }
+}
+
+function keep(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode — the server still records the check-in */
+  }
+}
+
 function locationFailureNote(code: number | undefined): string {
   if (code === 1) {
     return "Safari blocked location. On iPhone, open Settings, then Safari, then Location, and choose Allow. Take a selfie to check in.";
@@ -101,10 +121,16 @@ export function PublicAttendance() {
     last: string,
     message: string,
   ) => {
-    sessionStorage.setItem(
+    keep(
       `branner-done:${slugKey}`,
       JSON.stringify({ firstName: first, lastName: last, message }),
     );
+    if (first || last) {
+      keep(
+        `branner-name:${slugKey}`,
+        JSON.stringify({ firstName: first, lastName: last }),
+      );
+    }
     setDone(message);
   };
 
@@ -125,7 +151,7 @@ export function PublicAttendance() {
       googleEnabled: boolean;
       allowDevLogin: boolean;
     }>(`/api/public/events/${slug}${suffix}`);
-    let nextEvent = data.event;
+    let nextEvent = withResponseGate(data.event);
     try {
       const staff = await api<{
         events: {
@@ -175,13 +201,17 @@ export function PublicAttendance() {
     } else {
       try {
         const prior = JSON.parse(
-          sessionStorage.getItem(`branner-done:${nextEvent.slug}`) || "{}",
-        ) as { firstName?: string; lastName?: string };
-        const same =
-          `${prior.firstName ?? ""} ${prior.lastName ?? ""}`
-            .trim()
-            .toLowerCase() === `${first} ${last}`.trim().toLowerCase();
-        if (!same) setDone("");
+          stored(`branner-done:${nextEvent.slug}`) || "{}",
+        ) as { firstName?: string; lastName?: string; message?: string };
+        if (nextEvent.oneResponse !== false && prior.message) {
+          setDone(prior.message);
+        } else {
+          const same =
+            `${prior.firstName ?? ""} ${prior.lastName ?? ""}`
+              .trim()
+              .toLowerCase() === `${first} ${last}`.trim().toLowerCase();
+          if (!same) setDone("");
+        }
       } catch {
         /* keep current done */
       }
@@ -193,7 +223,7 @@ export function PublicAttendance() {
     let first = "";
     let last = "";
     try {
-      const raw = sessionStorage.getItem(`branner-name:${slug}`);
+      const raw = stored(`branner-name:${slug}`);
       const saved = raw
         ? (JSON.parse(raw) as { firstName?: string; lastName?: string })
         : {};
@@ -201,7 +231,7 @@ export function PublicAttendance() {
       last = saved.lastName ?? "";
       setFirstName(first);
       setLastName(last);
-      const doneRaw = sessionStorage.getItem(`branner-done:${slug}`);
+      const doneRaw = stored(`branner-done:${slug}`);
       if (doneRaw) {
         const prior = JSON.parse(doneRaw) as {
           firstName?: string;
@@ -375,7 +405,7 @@ export function PublicAttendance() {
     setError("");
     try {
       if (!event.requireLogin) {
-        sessionStorage.setItem(
+        keep(
           `branner-name:${event.slug}`,
           JSON.stringify({
             firstName: firstName.trim(),
@@ -550,7 +580,7 @@ export function PublicAttendance() {
           </p>
         )}
 
-        {!closed && !event.requireLogin && (
+        {!closed && !event.requireLogin && (event.oneResponse === false || !done) && (
           <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
             <p className="text-sm font-medium">Write your name</p>
 
@@ -562,7 +592,7 @@ export function PublicAttendance() {
                   value={firstName}
                   onChange={(e) => {
                     setFirstName(e.target.value);
-                    setDone("");
+                    if (event.oneResponse === false) setDone("");
                   }}
                   autoComplete="given-name"
                   required
@@ -575,7 +605,7 @@ export function PublicAttendance() {
                   value={lastName}
                   onChange={(e) => {
                     setLastName(e.target.value);
-                    setDone("");
+                    if (event.oneResponse === false) setDone("");
                   }}
                   autoComplete="family-name"
                   required

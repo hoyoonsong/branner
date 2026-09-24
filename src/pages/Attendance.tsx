@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { submissionWindow } from "../lib/attendance";
+import { responseGateOf, submissionWindow } from "../lib/attendance";
 import type { AttendanceEvent, EventType, FormSchema } from "../lib/types";
 import { formatWhen, fromDatetimeLocal } from "../lib/utils";
 import { BRANNER_LAT, BRANNER_LNG } from "../lib/geo";
@@ -65,7 +65,7 @@ export function Attendance() {
                 <p className="font-medium">{ev.title}</p>
                 <p className="text-sm text-stone-mute">
                   {ev.eventType?.label} · {formatWhen(ev.startsAt)}
-                  {submissionWindow(ev).open ? "" : " · responses closed"}
+                  {submissionWindow(responseGateOf(ev)).open ? "" : " · responses closed"}
                 </p>
               </div>
               <p className="text-sm text-stone-mute">{ev._count?.submissions ?? 0} present</p>
@@ -162,7 +162,14 @@ function NewEventModal({
           lat,
           lng,
           radiusMeters,
-          formSchema: schema,
+          formSchema: {
+            ...schema,
+            responseGate: {
+              acceptingResponses,
+              responsesOpenAt: openAt,
+              responsesCloseAt: closeAt,
+            },
+          },
         }),
       });
       onCreated();

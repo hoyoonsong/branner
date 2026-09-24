@@ -85,6 +85,57 @@ export function applyAttendanceStatus(
 
 export type SubmissionWindowReason = "paused" | "not_yet" | "ended";
 
+export function responseGateOf(event: {
+  acceptingResponses?: boolean | null;
+  responsesOpenAt?: string | Date | null;
+  responsesCloseAt?: string | Date | null;
+  formSchema?: { responseGate?: { acceptingResponses?: boolean; responsesOpenAt?: string | null; responsesCloseAt?: string | null } } | string | null;
+}): {
+  acceptingResponses: boolean;
+  responsesOpenAt: string | null;
+  responsesCloseAt: string | null;
+} {
+  const embedded = embeddedGate(event.formSchema);
+  const openAt = asIso(event.responsesOpenAt) || embedded?.responsesOpenAt || null;
+  const closeAt = asIso(event.responsesCloseAt) || embedded?.responsesCloseAt || null;
+  const closed =
+    event.acceptingResponses === false || embedded?.acceptingResponses === false;
+  return {
+    acceptingResponses: !closed,
+    responsesOpenAt: openAt,
+    responsesCloseAt: closeAt,
+  };
+}
+
+export function withResponseGate<T extends {
+  acceptingResponses?: boolean | null;
+  responsesOpenAt?: string | Date | null;
+  responsesCloseAt?: string | Date | null;
+  formSchema?: { responseGate?: { acceptingResponses?: boolean; responsesOpenAt?: string | null; responsesCloseAt?: string | null } } | string | null;
+}>(event: T): T {
+  const gate = responseGateOf(event);
+  return { ...event, ...gate };
+}
+
+function embeddedGate(formSchema: { responseGate?: { acceptingResponses?: boolean; responsesOpenAt?: string | null; responsesCloseAt?: string | null } } | string | null | undefined) {
+  if (!formSchema) return null;
+  if (typeof formSchema === "string") {
+    try {
+      const parsed = JSON.parse(formSchema) as { responseGate?: { acceptingResponses?: boolean; responsesOpenAt?: string | null; responsesCloseAt?: string | null } };
+      return parsed?.responseGate ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return formSchema.responseGate ?? null;
+}
+
+function asIso(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  return value;
+}
+
 export function submissionWindow(
   event: {
     acceptingResponses?: boolean | null;
