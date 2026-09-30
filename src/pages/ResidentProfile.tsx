@@ -150,7 +150,7 @@ function RoommateContractSection({
         <SheetsConnection title="the roommate form" description={payload.description} plain />
       )}
       {(error || payload?.error) && (
-        <p className="mt-3 text-sm text-cardinal">{error || payload?.error}</p>
+        <p className="mt-3 break-words text-sm text-cardinal">{error || payload?.error}</p>
       )}
       {!blocked && !loading && response && (
         <div className="mt-4">

@@ -57,10 +57,8 @@ async function fetchTable(spreadsheetId: string, gid: string): Promise<string[][
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
-  if (metaRes.status === 401 || metaRes.status === 403) throw new SheetsNotConnected();
-  if (!metaRes.ok) {
-    throw new Error(`Could not open the spreadsheet (${metaRes.status})`);
-  }
+  if (metaRes.status === 401) throw new SheetsNotConnected();
+  if (!metaRes.ok) throw await sheetsFailure(metaRes, "Could not open the spreadsheet");
   const meta = (await metaRes.json()) as {
     sheets?: { properties?: { sheetId?: number; title?: string } }[];
   };
@@ -73,8 +71,8 @@ async function fetchTable(spreadsheetId: string, gid: string): Promise<string[][
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
-  if (valuesRes.status === 401 || valuesRes.status === 403) throw new SheetsNotConnected();
-  if (!valuesRes.ok) throw new Error(`Could not read form responses (${valuesRes.status})`);
+  if (valuesRes.status === 401) throw new SheetsNotConnected();
+  if (!valuesRes.ok) throw await sheetsFailure(valuesRes, "Could not read form responses");
   const body = (await valuesRes.json()) as { values?: string[][] };
   return (body.values ?? []).map((row) => row.map((cell) => String(cell ?? "")));
 }
@@ -100,9 +98,36 @@ async function sheetsAccessToken(): Promise<string | null> {
       grant_type: "refresh_token",
     }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (json?.error === "invalid_grant") return null;
+    throw new Error("Google did not accept the saved Sheets connection. Connect again.");
+  }
   const json = (await res.json()) as { access_token?: string };
   return json.access_token || null;
+}
+
+async function sheetsFailure(res: Response, fallback: string): Promise<Error> {
+  const message = await res.text();
+  let detail = message;
+  try {
+    const json = JSON.parse(message) as { error?: { message?: string } };
+    detail = json.error?.message || message;
+  } catch {
+    /* keep the raw body */
+  }
+  const enableUrl = detail.match(/https:\/\/console\.developers\.google\.com\/\S+/)?.[0];
+  if (enableUrl || /has not been used|is disabled/i.test(detail)) {
+    return new Error(
+      enableUrl
+        ? `The Google Sheets API is turned off for this login. Enable it, wait a minute, then refresh. ${enableUrl}`
+        : "The Google Sheets API is turned off for this login. Enable it in Google Cloud, wait a minute, then refresh.",
+    );
+  }
+  if (res.status === 403) {
+    return new Error("The connected Google account cannot open that spreadsheet.");
+  }
+  return new Error(`${fallback} (${res.status})`);
 }
 
 export function parseCsv(text: string): string[][] {

@@ -106,7 +106,9 @@ export function RoommateContracts() {
         </p>
       )}
       {payload?.error && (
-        <p className="mt-6 rounded-2xl bg-white p-5 text-sm text-cardinal shadow-sm">{payload.error}</p>
+        <p className="mt-6 rounded-2xl bg-white p-5 text-sm text-cardinal shadow-sm">
+          <LinkedNotice text={payload.error} />
+        </p>
       )}
       {payload?.needsConnection && (
         <SheetsConnection title={payload.title.toLowerCase()} description={payload.description} />
@@ -301,6 +303,23 @@ function RoomCard({ room }: { room: RoomGroup }) {
         </details>
       )}
     </article>
+  );
+}
+
+function LinkedNotice({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/\S+)/);
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.startsWith("http") ? (
+          <a key={index} href={part} target="_blank" rel="noreferrer" className="break-all underline">
+            {part}
+          </a>
+        ) : (
+          <span key={index}>{part}</span>
+        ),
+      )}
+    </>
   );
 }
 
