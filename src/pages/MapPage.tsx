@@ -77,7 +77,7 @@ export function MapPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl">Branner map</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Branner map</h1>
         </div>
         <div className="flex rounded-lg bg-white p-1 shadow-sm">
           {([1, 2, 3] as const).map((n) => (
@@ -99,7 +99,7 @@ export function MapPage() {
         </div>
       </div>
 
-      <div className="mt-6 h-[480px] overflow-hidden rounded-2xl bg-white p-4 shadow-sm">
+      <div className="mt-4 h-[min(70vh,32rem)] min-h-[16rem] overflow-hidden rounded-2xl bg-white p-2 shadow-sm sm:mt-6 sm:p-4">
         <svg
           viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
           preserveAspectRatio="xMidYMin meet"

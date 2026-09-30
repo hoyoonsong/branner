@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { FormResponseDetail, SheetsConnection } from "../components/FormResponseDetail";
 import { api } from "../lib/api";
 import { birthdayFor, formatBirthday, parseBirthday } from "../lib/birthday";
+import { responseFor, useConnectedForm } from "../lib/connectedForm";
+import { roomNeedsContract } from "../lib/roommateContract";
 import { isRa, type Resident } from "../lib/types";
 import { clsx, fullName } from "../lib/utils";
 import { Avatar, RaBadge } from "./Residents";
@@ -37,13 +40,13 @@ export function ResidentProfile() {
       </Link>
       <div
         className={clsx(
-          "mt-4 flex gap-5 rounded-2xl p-6 shadow-sm",
+          "mt-4 flex flex-col gap-4 rounded-2xl p-4 shadow-sm sm:flex-row sm:gap-5 sm:p-6",
           isRa(resident) ? "bg-amber-50 ring-2 ring-amber-400" : "bg-white",
         )}
       >
         <Avatar resident={resident} size={112} />
         <div>
-          <h1 className="flex flex-wrap items-center gap-2 font-display text-3xl">
+          <h1 className="flex flex-wrap items-center gap-2 font-display text-2xl sm:text-3xl">
             {fullName(resident)}
             {isRa(resident) && <RaBadge />}
           </h1>
@@ -56,7 +59,7 @@ export function ResidentProfile() {
           <p className="text-sm">{resident.email}</p>
         </div>
       </div>
-      <dl className="mt-6 grid gap-3 rounded-2xl bg-white p-6 text-sm shadow-sm sm:grid-cols-2">
+      <dl className="mt-6 grid gap-3 rounded-2xl bg-white p-4 text-sm shadow-sm sm:grid-cols-2 sm:p-6">
         <Item
           k="Birthday"
           v={(() => {
@@ -85,6 +88,7 @@ export function ResidentProfile() {
           ))}
         </div>
       </section>
+      <RoommateContractSection resident={resident} roommates={roommates} />
       <section className="mt-6 rounded-2xl bg-white p-6 shadow-sm">
         <h2 className="font-display text-xl">Staff notes</h2>
         <textarea
@@ -100,6 +104,70 @@ export function ResidentProfile() {
         </div>
       </section>
     </div>
+  );
+}
+
+function RoommateContractSection({
+  resident,
+  roommates,
+}: {
+  resident: Resident;
+  roommates: Resident[];
+}) {
+  const { payload, error, loading } = useConnectedForm("roommate-agreement");
+  const required = roomNeedsContract([resident, ...roommates]);
+  const blocked = Boolean(error || payload?.needsConnection || payload?.error);
+  const response = blocked ? null : responseFor(payload, resident.room);
+  const status = loading
+    ? "Loading"
+    : blocked
+      ? "Unavailable"
+      : response
+        ? "Submitted"
+        : required
+          ? "Not submitted"
+          : "Not required";
+
+  return (
+    <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-display text-xl">Roommate contract</h2>
+        <span
+          className={clsx(
+            "rounded-full px-2.5 py-1 text-xs font-semibold",
+            response
+              ? "bg-emerald-100 text-emerald-800"
+              : required && !blocked && !loading
+                ? "bg-amber-100 text-amber-900"
+                : "bg-stone-sand text-stone-mute",
+          )}
+        >
+          {status}
+        </span>
+      </div>
+      {loading && !payload && <p className="mt-3 text-sm text-stone-mute">Loading the roommate form…</p>}
+      {payload?.needsConnection && (
+        <SheetsConnection title="the roommate form" description={payload.description} plain />
+      )}
+      {(error || payload?.error) && (
+        <p className="mt-3 text-sm text-cardinal">{error || payload?.error}</p>
+      )}
+      {!blocked && !loading && response && (
+        <div className="mt-4">
+          <FormResponseDetail response={response} residents={[resident, ...roommates]} />
+        </div>
+      )}
+      {!blocked && !loading && !response && (
+        <p className="mt-3 text-sm text-stone-mute">
+          {required
+            ? `Room ${resident.room} has not turned in a roommate agreement.`
+            : "This room does not need a roommate contract."}
+        </p>
+      )}
+      <Link to="/contracts" className="mt-4 inline-block text-sm font-medium text-cardinal">
+        All roommate contracts
+      </Link>
+    </section>
   );
 }
 

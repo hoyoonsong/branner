@@ -7,6 +7,7 @@ import { Attendance } from "./pages/Attendance";
 import { EventDetail } from "./pages/EventDetail";
 import { Residents } from "./pages/Residents";
 import { ResidentProfile } from "./pages/ResidentProfile";
+import { RoommateContracts } from "./pages/RoommateContracts";
 import { Birthdays } from "./pages/Birthdays";
 import { MapPage } from "./pages/MapPage";
 import { Admins } from "./pages/Admins";
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/attendance/:id" element={<EventDetail />} />
           <Route path="/residents" element={<Residents />} />
           <Route path="/residents/:id" element={<ResidentProfile />} />
+          <Route path="/contracts" element={<RoommateContracts />} />
           <Route path="/birthdays" element={<Birthdays />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/admins" element={<Admins />} />

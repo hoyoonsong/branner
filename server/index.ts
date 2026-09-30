@@ -9,6 +9,7 @@ import { residentsRouter } from "./routes/residents.js";
 import { eventsRouter } from "./routes/events.js";
 import { publicRouter } from "./routes/public.js";
 import { geoRouter } from "./routes/geo.js";
+import { formsRouter } from "./routes/forms.js";
 import { importRouter } from "./routes/import.js";
 import { ensureSeed } from "./ensure-seed.js";
 import { googleCallbackUrl, publicOrigin, uploadsDir } from "./runtime.js";
@@ -58,6 +59,7 @@ app.use("/api/residents", residentsRouter);
 app.use("/api/events", eventsRouter);
 app.use("/api/public", publicRouter);
 app.use("/api/geo", geoRouter);
+app.use("/api/forms", formsRouter);
 
 const uploads = uploadsDir();
 app.use("/uploads", express.static(uploads));

@@ -63,6 +63,25 @@ authRouter.get("/google", (req, res, next) => {
   })(req, res, next);
 });
 
+authRouter.get("/google/sheets", (req, res, next) => {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    res.status(400).json({ error: "Google login is not configured" });
+    return;
+  }
+  const google = passport as typeof passport & {
+    authenticate: (strategy: string, options: Record<string, unknown>) => ReturnType<typeof passport.authenticate>;
+  };
+  google.authenticate("google", {
+    scope: ["email", "profile", "https://www.googleapis.com/auth/spreadsheets.readonly"],
+    hd: "stanford.edu",
+    accessType: "offline",
+    prompt: "consent",
+    includeGrantedScopes: true,
+    state: "sheets",
+    callbackURL: googleCallbackUrl(req),
+  })(req, res, next);
+});
+
 authRouter.get("/google/callback", (req, res, next) => {
   const google = passport as typeof passport & {
     authenticate: (strategy: string, options: Record<string, unknown>) => ReturnType<typeof passport.authenticate>;
@@ -72,6 +91,10 @@ authRouter.get("/google/callback", (req, res, next) => {
     callbackURL: googleCallbackUrl(req),
   })(req, res, next);
 }, (req, res) => {
+    if (String(req.query.state ?? "") === "sheets") {
+      res.redirect("/contracts");
+      return;
+    }
     const next = safeNext(req.query.state);
     if (next) {
       res.redirect(next);
@@ -154,7 +177,10 @@ authRouter.post("/logout", (req, res) => {
 });
 
 authRouter.get("/admins", requireApproved, async (_req, res) => {
-  const admins = await prisma.admin.findMany({ orderBy: { createdAt: "asc" } });
+  const admins = await prisma.admin.findMany({
+    orderBy: { createdAt: "asc" },
+    select: { id: true, email: true, name: true, status: true },
+  });
   res.json({ admins, seedEmails: seedAdminEmails() });
 });
 
@@ -167,6 +193,7 @@ authRouter.patch("/admins/:id", requireApproved, async (req, res) => {
   const admin = await prisma.admin.update({
     where: { id: req.params.id },
     data: { status },
+    select: { id: true, email: true, name: true, status: true },
   });
   res.json({ admin });
 });

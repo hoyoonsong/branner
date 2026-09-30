@@ -283,8 +283,8 @@ export function EventDetail() {
         ← Attendance
       </Link>
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="font-display text-3xl">{event.title}</h1>
+        <div className="min-w-0">
+          <h1 className="break-words font-display text-2xl sm:text-3xl">{event.title}</h1>
           <p className="text-stone-mute">
             {event.eventType?.label} · {formatWhen(event.startsAt)}
           </p>
@@ -652,7 +652,7 @@ function PeopleLists({
               <div
                 key={r.id}
                 className={clsx(
-                  "flex items-center gap-3 rounded-xl px-3 py-2 shadow-sm",
+                  "flex flex-col gap-2 rounded-xl px-3 py-2 shadow-sm sm:flex-row sm:items-center sm:gap-3",
                   isRa(r) ? "bg-amber-50 ring-1 ring-amber-300" : "bg-white",
                 )}
               >
@@ -669,7 +669,7 @@ function PeopleLists({
                     </span>
                   </span>
                 </Link>
-                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                <div className="flex flex-wrap gap-1 sm:shrink-0 sm:justify-end">
                   <button
                     type="button"
                     disabled={busyId === r.id}
@@ -801,7 +801,7 @@ function PresentRow({
   return (
     <div
       className={clsx(
-        "flex items-center gap-3 px-4 py-3",
+        "flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center",
         isRa(resident) && "bg-amber-50/80",
       )}
     >

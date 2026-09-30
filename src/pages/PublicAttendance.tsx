@@ -501,13 +501,13 @@ export function PublicAttendance() {
   return (
     <div className="min-h-screen bg-stone-sand">
       <div
-        className={`${bar.bg} px-4 py-3 text-center text-sm font-medium text-white`}
+        className={`${bar.bg} flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 py-3 text-center text-sm font-medium text-white`}
       >
         {bar.text}
         {!closed && (loc === "unavailable" || loc === "prompt") && event.locationTracking && (
           <button
             type="button"
-            className="ml-3 underline"
+            className="underline"
             onClick={startWatch}
           >
             Try location again
@@ -518,7 +518,7 @@ export function PublicAttendance() {
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cardinal">
           Branner
         </p>
-        <h1 className="mt-1 font-display text-3xl">{event.title}</h1>
+        <h1 className="mt-1 break-words font-display text-2xl sm:text-3xl">{event.title}</h1>
         <p className="text-sm text-stone-mute">
           {event.eventType?.label ?? "House meeting"}
         </p>

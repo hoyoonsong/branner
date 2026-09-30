@@ -20,6 +20,13 @@ export type AuthedAdmin = {
   status: string;
 };
 
+export function publicAdmin(
+  admin: { id: string; email: string; name: string; status: string } | null | undefined,
+): AuthedAdmin | null {
+  if (!admin) return null;
+  return { id: admin.id, email: admin.email, name: admin.name, status: admin.status };
+}
+
 export type SessionUser = {
   email: string;
   name: string;
@@ -112,7 +119,7 @@ export function configureAuth(app: Express) {
           done(null, false);
           return;
         }
-        done(null, { email: admin.email, name: admin.name, admin });
+        done(null, { email: admin.email, name: admin.name, admin: publicAdmin(admin) });
         return;
       }
       const email = stored?.email?.toLowerCase();
@@ -124,7 +131,7 @@ export function configureAuth(app: Express) {
       done(null, {
         email,
         name: stored.name ?? admin?.name ?? email,
-        admin,
+        admin: publicAdmin(admin),
       });
     } catch (err) {
       done(err);
@@ -142,22 +149,29 @@ export function configureAuth(app: Express) {
           callbackURL: googleCallbackUrl(),
           passReqToCallback: true,
         },
-        async (req, _access, _refresh, profile, done) => {
+        async (req, _access, refreshToken, profile, done) => {
           const email = profile.emails?.[0]?.value?.toLowerCase();
           const hostedDomain = (profile._json as { hd?: string } | undefined)?.hd?.toLowerCase();
           if (!email || !isStanford(email) || (hostedDomain && hostedDomain !== "stanford.edu")) {
             return done(null, false);
           }
           const name = profile.displayName || email;
-          const next = safeNext(req.query.state);
+          const state = String(req.query.state ?? "");
+          const next = safeNext(state);
           try {
             if (next.startsWith("/a/")) {
               const admin = await prisma.admin.findUnique({ where: { email } });
-              done(null, { email, name, admin });
+              done(null, { email, name, admin: publicAdmin(admin) });
               return;
             }
             const admin = await upsertAdmin({ email, name, googleId: profile.id });
-            done(null, { email, name, admin });
+            if (state === "sheets" && refreshToken) {
+              await prisma.admin.update({
+                where: { email },
+                data: { googleRefreshToken: refreshToken },
+              });
+            }
+            done(null, { email, name, admin: publicAdmin(admin) });
           } catch (err) {
             done(err as Error);
           }

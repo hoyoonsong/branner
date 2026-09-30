@@ -116,7 +116,7 @@ export function Birthdays() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl">Birthdays</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Birthdays</h1>
           <p className="mt-1 text-sm text-stone-mute">
             {missing > 0
               ? `${missing} ${missing === 1 ? "person has" : "people have"} no birthday on file.`
@@ -192,7 +192,7 @@ function NextHero({ rows, today }: { rows: BirthdayRow[]; today: Date }) {
 
   return (
     <section className="mt-6 overflow-hidden rounded-[28px] bg-cardinal text-white shadow-lg">
-      <div className="flex flex-wrap items-start justify-between gap-4 px-6 pt-6 sm:px-8">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-5 sm:gap-4 sm:px-8 sm:pt-6">
         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/70">
           {first.today ? "Birthday today" : "Next birthday"}
         </p>
@@ -200,19 +200,19 @@ function NextHero({ rows, today }: { rows: BirthdayRow[]; today: Date }) {
           {countdown}
         </p>
       </div>
-      <div className="px-6 pb-2 pt-3 sm:px-8">
-        <p className="font-display text-4xl leading-tight sm:text-5xl">
+      <div className="px-4 pb-2 pt-3 sm:px-8">
+        <p className="break-words font-display text-3xl leading-tight sm:text-5xl">
           {dateLabel}
         </p>
       </div>
       {one ? (
         <Link
           to={`/residents/${first.resident.id}`}
-          className="mt-4 flex items-center gap-5 px-6 pb-7 hover:bg-white/5 sm:px-8"
+          className="mt-4 flex items-center gap-3 px-4 pb-6 hover:bg-white/5 sm:gap-5 sm:px-8 sm:pb-7"
         >
-          <Avatar resident={first.resident} size={112} />
+          <Avatar resident={first.resident} size={80} />
           <div className="min-w-0">
-            <p className="flex flex-wrap items-center gap-2 font-display text-3xl leading-tight">
+            <p className="flex flex-wrap items-center gap-2 break-words font-display text-2xl leading-tight sm:text-3xl">
               {fullName(first.resident)}
               {isRa(first.resident) && <RaBadge />}
             </p>
@@ -223,7 +223,7 @@ function NextHero({ rows, today }: { rows: BirthdayRow[]; today: Date }) {
           </div>
         </Link>
       ) : (
-        <div className="mt-4 grid gap-3 px-6 pb-7 sm:grid-cols-2 sm:px-8">
+        <div className="mt-4 grid gap-3 px-4 pb-6 sm:grid-cols-2 sm:px-8 sm:pb-7">
           {rows.map((row) => (
             <Link
               key={row.resident.id}

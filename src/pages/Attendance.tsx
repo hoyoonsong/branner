@@ -40,15 +40,15 @@ export function Attendance() {
 
   return (
     <div>
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="font-display text-3xl">Attendance</h1>
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl sm:text-3xl">Attendance</h1>
           <p className="text-sm text-stone-mute">Create a check-in, share the QR, watch who is here.</p>
         </div>
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="rounded-lg bg-cardinal px-4 py-2 text-sm font-semibold text-white"
+          className="shrink-0 rounded-lg bg-cardinal px-4 py-2 text-sm font-semibold text-white"
         >
           New event
         </button>
@@ -60,15 +60,15 @@ export function Attendance() {
             to={`/attendance/${ev.id}`}
             className="block rounded-2xl bg-white px-5 py-4 shadow-sm hover:shadow"
           >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-medium">{ev.title}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="break-words font-medium">{ev.title}</p>
                 <p className="text-sm text-stone-mute">
                   {ev.eventType?.label} · {formatWhen(ev.startsAt)}
                   {submissionWindow(responseGateOf(ev)).open ? "" : " · responses closed"}
                 </p>
               </div>
-              <p className="text-sm text-stone-mute">{ev._count?.submissions ?? 0} present</p>
+              <p className="shrink-0 text-sm text-stone-mute">{ev._count?.submissions ?? 0} present</p>
             </div>
           </Link>
         ))}
