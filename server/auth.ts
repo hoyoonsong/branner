@@ -4,6 +4,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import FileStoreFactory from "session-file-store";
 import { prisma } from "./prisma.js";
+import { canAccessPage, normalizeRole, parsePages, type AdminRole, type StaffPageId } from "./permissions.js";
 import {
   googleCallbackUrl,
   onRailway,
@@ -18,13 +19,32 @@ export type AuthedAdmin = {
   email: string;
   name: string;
   status: string;
+  role: AdminRole;
+  pages: StaffPageId[];
 };
 
 export function publicAdmin(
-  admin: { id: string; email: string; name: string; status: string } | null | undefined,
+  admin:
+    | {
+        id: string;
+        email: string;
+        name: string;
+        status: string;
+        role?: string | null;
+        pages?: string | readonly string[] | null;
+      }
+    | null
+    | undefined,
 ): AuthedAdmin | null {
   if (!admin) return null;
-  return { id: admin.id, email: admin.email, name: admin.name, status: admin.status };
+  return {
+    id: admin.id,
+    email: admin.email,
+    name: admin.name,
+    status: admin.status,
+    role: normalizeRole(admin.role),
+    pages: parsePages(admin.pages),
+  };
 }
 
 export type SessionUser = {
@@ -81,7 +101,7 @@ async function upsertAdmin(input: {
       status,
     },
   });
-  return admin;
+  return publicAdmin(admin)!;
 }
 
 export function configureAuth(app: Express) {
@@ -182,12 +202,10 @@ export function configureAuth(app: Express) {
 }
 
 export function currentAdmin(req: Request): AuthedAdmin | null {
-  const user = req.user as (SessionUser & AuthedAdmin) | undefined;
+  const user = req.user as (SessionUser & Partial<AuthedAdmin>) | undefined;
   if (!user) return null;
-  if (user.admin) return user.admin;
-  if (user.id && user.status) {
-    return { id: user.id, email: user.email, name: user.name, status: user.status };
-  }
+  if (user.admin) return publicAdmin(user.admin);
+  if (user.id && user.status) return publicAdmin(user as AuthedAdmin);
   return null;
 }
 
@@ -221,6 +239,30 @@ export function requireApproved(req: Request, res: Response, next: NextFunction)
   next();
 }
 
+export function requireFullAdmin(req: Request, res: Response, next: NextFunction) {
+  requireApproved(req, res, () => {
+    const admin = currentAdmin(req);
+    if (!admin || admin.role !== "admin") {
+      res.status(403).json({ error: "Only admins can do that" });
+      return;
+    }
+    next();
+  });
+}
+
+export function requirePage(...pages: StaffPageId[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    requireApproved(req, res, () => {
+      const admin = currentAdmin(req);
+      if (!admin || !pages.some((page) => canAccessPage(admin, page))) {
+        res.status(403).json({ error: "You don't have access to this page" });
+        return;
+      }
+      next();
+    });
+  };
+}
+
 export async function loginLocal(req: Request, email: string, name?: string) {
   if (!isStanford(email)) {
     throw new Error("Stanford email required");
@@ -240,7 +282,8 @@ export async function loginIdentity(req: Request, email: string) {
   }
   const normalized = email.toLowerCase();
   const resident = await prisma.resident.findUnique({ where: { email: normalized } });
-  const admin = await prisma.admin.findUnique({ where: { email: normalized } });
+  const record = await prisma.admin.findUnique({ where: { email: normalized } });
+  const admin = publicAdmin(record);
   const name = resident ? `${resident.firstName} ${resident.lastName}` : admin?.name || normalized;
   await new Promise<void>((resolve, reject) => {
     req.login({ email: normalized, name, admin }, (err) => (err ? reject(err) : resolve()));

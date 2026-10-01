@@ -1,10 +1,17 @@
 import { Router } from "express";
 import { prisma } from "../prisma.js";
-import { requireApproved } from "../auth.js";
+import { requirePage } from "../auth.js";
+import { RESIDENT_READ_PAGES } from "../permissions.js";
 
 export const residentsRouter = Router();
 
-residentsRouter.use(requireApproved);
+residentsRouter.use((req, res, next) => {
+  const gate =
+    req.method === "GET" || req.method === "HEAD"
+      ? requirePage(...RESIDENT_READ_PAGES)
+      : requirePage("residents");
+  gate(req, res, next);
+});
 
 residentsRouter.get("/", async (req, res) => {
   const q = String(req.query.q ?? "").trim().toLowerCase();

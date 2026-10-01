@@ -1,10 +1,11 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { firstStaffPath } from "../lib/permissions";
 
 export function Pending() {
   const { user, logout } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (user.status === "approved") return <Navigate to="/attendance" replace />;
+  if (user.status === "approved") return <Navigate to={firstStaffPath(user) ?? "/"} replace />;
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="max-w-md rounded-2xl bg-white p-8 text-center shadow-sm">

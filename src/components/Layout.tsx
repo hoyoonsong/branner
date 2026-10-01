@@ -1,19 +1,19 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { canAccessPage, firstStaffPath, isFullAdmin, STAFF_PAGES } from "../lib/permissions";
 import { clsx } from "../lib/utils";
-
-const links = [
-  { to: "/attendance", label: "Attendance" },
-  { to: "/residents", label: "Residents" },
-  { to: "/contracts", label: "Contracts" },
-  { to: "/birthdays", label: "Birthdays" },
-  { to: "/map", label: "Map" },
-  { to: "/admins", label: "Admins" },
-];
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const links = [
+    ...STAFF_PAGES.filter((page) => canAccessPage(user, page.id)).map((page) => ({
+      to: page.to,
+      label: page.label,
+    })),
+    ...(isFullAdmin(user) ? [{ to: "/admins", label: "Admins" }] : []),
+  ];
+  const home = firstStaffPath(user) ?? "/";
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -25,7 +25,7 @@ export function Layout() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-black/5 bg-cardinal text-white">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-3 py-2.5 sm:px-4 sm:py-3">
-          <NavLink to="/attendance" className="shrink-0 font-display text-xl tracking-tight">
+          <NavLink to={home} className="shrink-0 font-display text-xl tracking-tight">
             Branner
           </NavLink>
           <nav className="hidden min-w-0 flex-1 items-center gap-1 text-sm lg:flex">

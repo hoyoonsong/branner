@@ -193,6 +193,8 @@ export type AdminUser = {
   email: string;
   name: string;
   status: "pending" | "approved" | "rejected" | string;
+  role: "admin" | "student_leader";
+  pages: string[];
 };
 
 export type Resident = {

@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { prisma } from "../prisma.js";
-import { requireApproved } from "../auth.js";
+import { requirePage } from "../auth.js";
 import { BRANNER_LAT, BRANNER_LNG } from "../geo.js";
 import { eventIsHouseMeeting, isHouseMeeting, isRa } from "../roster.js";
 import { slugify, uniqueSlug } from "../slug.js";
 import { applyAttendanceStatus, attendanceStatus, parseResponseData } from "../attendance.js";
 
 export const eventsRouter = Router();
-eventsRouter.use(requireApproved);
+eventsRouter.use(requirePage("attendance"));
 
 const defaultFormSchema = JSON.stringify({
   fields: [

@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { requireApproved } from "../auth.js";
+import { requirePage } from "../auth.js";
 
 export const geoRouter = Router();
-geoRouter.use(requireApproved);
+geoRouter.use(requirePage("attendance"));
 
 type Place = { label: string; lat: number; lng: number };
 

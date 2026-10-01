@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
-import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormSchema, type Resident } from "../lib/types";
+import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormField, type FormSchema, type Resident } from "../lib/types";
+import { flattenVisibleFields } from "../lib/conditional";
 import { applyAttendanceStatus, attendanceStatus, excusedNoteOf, lateAtOf, responseGateOf, submissionWindow, withResponseGate, type AttendanceStatus } from "../lib/attendance";
 import { clsx, downloadTextFile, fileSlug, formatCheckIn, formatWhen, fromDatetimeLocal, fullName, personSearchHay, toCsv, toDatetimeLocal } from "../lib/utils";
 import { FormBuilderModal } from "../components/FormBuilderModal";
@@ -736,9 +737,11 @@ function PresentRow({
   onMarkLate?: () => void;
   onRemove: () => void;
 }) {
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const resident = s.resident;
   const name = resident ? fullName(resident) : s.guestName || "Guest";
-  const answers = formatAnswers(schema, s.responseData);
+  const answers = responseItems(schema, s.responseData);
   const staffMarked = Boolean(s.responseData?.staffMarked);
   const lateAt = lateAtOf(s.responseData);
   const excusedNote = excusedNoteOf(s.responseData);
@@ -785,78 +788,161 @@ function PresentRow({
             ? [resident.room, resident.hall, resident.email].filter(Boolean).join(" · ")
             : "Name written at check-in — not matched to the roster"}
         </p>
-        {kind === "late" && lateAt && (
-          <p className="mt-1 text-xs text-amber-800">Marked late {formatCheckIn(lateAt)}</p>
-        )}
-        {kind === "excused" && excusedNote && (
-          <p className="mt-1 text-xs text-stone-mute">Note: {excusedNote}</p>
-        )}
-        {answers.length > 0 && (
-          <p className="mt-1 line-clamp-2 text-xs text-stone-mute">{answers.join(" · ")}</p>
-        )}
       </div>
     </>
   );
 
+  const locationLines = staffMarked
+    ? ["No GPS"]
+    : s.responseData?.locationUnavailable
+      ? ["Location not shared"]
+      : [
+          s.distanceM != null ? `${Math.round(s.distanceM)} m away` : "",
+          s.accuracy != null ? `±${Math.round(s.accuracy)} m GPS` : "",
+        ].filter(Boolean);
+  const hasDetails =
+    answers.length > 0 || locationLines.length > 0 || Boolean(lateAt) || Boolean(excusedNote);
+
   return (
-    <div
-      className={clsx(
-        "flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center",
-        isRa(resident) && "bg-amber-50/80",
-      )}
-    >
-      {resident ? (
-        <Link to={`/residents/${resident.id}`} className="flex min-w-0 flex-1 items-center gap-3 hover:text-cardinal">
-          {person}
-        </Link>
-      ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-3">{person}</div>
-      )}
-      <div className="shrink-0 text-right text-xs text-stone-mute">
-        {s.selfiePath && (
-          <a href={s.selfiePath} target="_blank" rel="noreferrer" className="mb-1 inline-block">
-            <img src={s.selfiePath} alt="Check-in selfie" className="h-12 w-12 rounded-lg object-cover" />
-          </a>
-        )}
-        <p>{formatCheckIn(s.createdAt)}</p>
-        {staffMarked ? (
-          <p>No GPS</p>
-        ) : s.responseData?.locationUnavailable ? (
-          <p>Location not shared</p>
+    <div className={clsx("px-4 py-2.5", isRa(resident) && "bg-amber-50/80")}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="min-w-0 flex-1">
+        {resident ? (
+          <Link to={`/residents/${resident.id}`} className="flex items-center gap-3 hover:text-cardinal">
+            {person}
+          </Link>
         ) : (
-          <>
-            {s.distanceM != null && <p>{Math.round(s.distanceM)} m away</p>}
-            {s.accuracy != null && <p>±{Math.round(s.accuracy)} m GPS</p>}
-          </>
+          <div className="flex items-center gap-3">{person}</div>
         )}
-        <div className="mt-2 flex flex-col items-end gap-1">
-          {onMarkLate && (
+      </div>
+      <div className="flex shrink-0 items-center justify-end gap-2 text-right text-xs text-stone-mute">
+        <div>
+          <p>{formatCheckIn(s.createdAt)}</p>
+          <div className="mt-1.5 flex items-center justify-end gap-1.5">
+            {onMarkLate && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onMarkLate();
+                }}
+                className="whitespace-nowrap rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 disabled:opacity-60"
+              >
+                Mark late
+              </button>
+            )}
             <button
               type="button"
               disabled={busy}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onMarkLate();
+                onRemove();
               }}
-              className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 disabled:opacity-60"
+              className="whitespace-nowrap rounded-lg border border-cardinal/20 px-2.5 py-1 text-xs font-medium text-cardinal hover:bg-cardinal/10 disabled:opacity-60"
             >
-              Mark late
+              {busy ? "Deleting…" : "Delete"}
             </button>
-          )}
+          </div>
+        </div>
+        {s.selfiePath && (
           <button
             type="button"
-            disabled={busy}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onRemove();
-            }}
-            className="rounded-lg border border-cardinal/20 px-2.5 py-1 text-xs font-medium text-cardinal hover:bg-cardinal/10 disabled:opacity-60"
+            onClick={() => setPhotoOpen(true)}
+            className="shrink-0 overflow-hidden rounded-lg ring-1 ring-black/10"
+            aria-label={`View check-in photo for ${name}`}
           >
-            {busy ? "Deleting…" : "Delete"}
+            <img src={s.selfiePath} alt="" className="h-12 w-12 object-cover" />
           </button>
-        </div>
+        )}
+        {hasDetails && (
+          <button
+            type="button"
+            aria-expanded={detailsOpen}
+            aria-label={detailsOpen ? `Hide details for ${name}` : `Show details for ${name}`}
+            onClick={() => setDetailsOpen((open) => !open)}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-stone-mute hover:bg-black/5"
+          >
+            <svg
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className={clsx("h-4 w-4 transition", detailsOpen && "rotate-180")}
+              aria-hidden
+            >
+              <path
+                fillRule="evenodd"
+                d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+        )}
+      </div>
+      </div>
+      {detailsOpen && (
+        <dl className="mt-2 grid gap-2 border-t border-black/5 pt-2 text-xs sm:ml-[3.75rem]">
+          {kind === "late" && lateAt && (
+            <div>
+              <dt className="font-medium text-amber-800">Marked late</dt>
+              <dd className="text-stone-mute">{formatCheckIn(lateAt)}</dd>
+            </div>
+          )}
+          {kind === "excused" && excusedNote && (
+            <div>
+              <dt className="font-medium text-stone-ink">Excused note</dt>
+              <dd className="whitespace-pre-wrap text-stone-mute">{excusedNote}</dd>
+            </div>
+          )}
+          {locationLines.length > 0 && (
+            <div>
+              <dt className="font-medium text-stone-ink">Location</dt>
+              <dd className="text-stone-mute">{locationLines.join(" · ")}</dd>
+            </div>
+          )}
+          {answers.map((item) => (
+            <div key={item.id}>
+              <dt className="font-medium text-stone-ink">{item.label}</dt>
+              <dd className="whitespace-pre-wrap text-stone-mute">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {photoOpen && s.selfiePath && (
+        <PhotoModal src={s.selfiePath} name={name} onClose={() => setPhotoOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+function PhotoModal({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Check-in photo for ${name}`}
+    >
+      <div className="relative inline-block max-h-[90vh] max-w-full" onClick={(e) => e.stopPropagation()}>
+        <img src={src} alt={`Check-in photo for ${name}`} className="max-h-[85vh] max-w-full rounded-xl object-contain" />
+        <p className="absolute bottom-3 left-3 rounded-full bg-black/60 px-3 py-1 text-sm text-white">{name}</p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 rounded-full bg-black/60 px-3 py-1.5 text-sm font-medium text-white hover:bg-black/80"
+        >
+          Close
+        </button>
       </div>
     </div>
   );
@@ -984,18 +1070,59 @@ function exportAttendanceCsv(
   downloadTextFile(`${fileSlug(event.title)}-${filter}-${stamp}.csv`, toCsv(headers, rows));
 }
 
-function formatAnswers(schema: FormSchema, data: Record<string, unknown> | null | undefined): string[] {
-  if (!data) return [];
-  return (schema.fields ?? [])
+const HIDDEN_RESPONSE_IDS = new Set(["staffMarked", "late", "lateAt", "excused", "excusedNote", "formSubmitted"]);
+
+function responseItems(schema: FormSchema, data: Record<string, unknown> | null | undefined) {
+  const answers = data ?? {};
+  return flattenVisibleFields(schema.fields ?? [], answers)
+    .filter((field) => field.type !== "heading" && field.type !== "location" && !HIDDEN_RESPONSE_IDS.has(field.id))
     .map((field) => {
-      if (field.id === "staffMarked" || field.id === "late" || field.id === "lateAt" || field.id === "excused" || field.id === "excusedNote" || field.id === "formSubmitted") return null;
-      const value = data[field.id];
-      if (value == null || value === "" || value === false) return null;
-      const shown = Array.isArray(value) ? value.filter(Boolean).join(", ") : String(value);
-      if (!shown.trim()) return null;
-      return `${field.label}: ${shown}`;
+      const value = formatAnswerValue(field, answers[field.id]);
+      if (!value) return null;
+      const rawLabel = field.label?.trim() || "";
+      const label =
+        field.type === "waiver"
+          ? rawLabel.length > 0 && rawLabel.length <= 80
+            ? rawLabel
+            : "Agreement"
+          : rawLabel || "Response";
+      return { id: field.id, label, value };
     })
-    .filter((v): v is string => Boolean(v));
+    .filter((item): item is { id: string; label: string; value: string } => Boolean(item));
+}
+
+function formatAnswerValue(field: FormField, value: unknown): string | null {
+  if (field.type === "waiver") {
+    const agreed =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as { agreed?: unknown }).agreed
+        : value;
+    if (agreed === true || agreed === "true" || agreed === "yes") return "Agreed";
+    if (agreed === false || agreed === "false" || agreed === "no") return "Did not agree";
+    return null;
+  }
+  if (value == null || value === "") return null;
+  if (field.type === "yesno") {
+    if (value === true || value === "true" || value === "yes") return "Yes";
+    if (value === false || value === "false" || value === "no") return "No";
+  }
+  if (field.type === "checkbox" && (value === false || value === "false")) return null;
+  if (value === true || value === "true") return "Yes";
+  if (Array.isArray(value)) {
+    const shown = value
+      .map((entry) => (entry == null || entry === false ? "" : String(entry)))
+      .filter(Boolean)
+      .join(", ");
+    return shown || null;
+  }
+  if (typeof value === "object") {
+    const parts = Object.values(value as Record<string, unknown>)
+      .filter((entry) => entry != null && entry !== "" && entry !== false)
+      .map(String);
+    return parts.length ? parts.join(", ") : null;
+  }
+  const shown = String(value).trim();
+  return shown || null;
 }
 
 function deriveRollup(

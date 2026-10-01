@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { firstStaffPath } from "../lib/permissions";
 
 export function Login() {
   const { user, googleEnabled, allowDevLogin, devLogin } = useAuth();
@@ -10,7 +11,7 @@ export function Login() {
   const nav = useNavigate();
   const oauthError = search.get("error");
 
-  if (user?.status === "approved") return <Navigate to="/attendance" replace />;
+  if (user?.status === "approved") return <Navigate to={firstStaffPath(user) ?? "/"} replace />;
   if (user) return <Navigate to="/pending" replace />;
 
   const onDev = async (e: FormEvent) => {
@@ -18,7 +19,7 @@ export function Login() {
     setError("");
     try {
       const u = await devLogin(email);
-      nav(u.status === "approved" ? "/attendance" : "/pending");
+      nav(u.status === "approved" ? (firstStaffPath(u) ?? "/") : "/pending");
     } catch (err) {
       setError((err as Error).message);
     }

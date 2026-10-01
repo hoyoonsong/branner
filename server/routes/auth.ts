@@ -5,10 +5,12 @@ import {
   currentIdentity,
   loginIdentity,
   loginLocal,
-  requireApproved,
+  publicAdmin,
+  requireFullAdmin,
   safeNext,
   seedAdminEmails,
 } from "../auth.js";
+import { isStaffPage, normalizeRole, parsePages, type AdminRole } from "../permissions.js";
 import { prisma } from "../prisma.js";
 import { googleCallbackUrl } from "../runtime.js";
 
@@ -22,9 +24,7 @@ authRouter.get("/me", async (req, res) => {
     resident = await prisma.resident.findUnique({ where: { email: identity.email } });
   }
   res.json({
-    user: admin
-      ? { id: admin.id, email: admin.email, name: admin.name, status: admin.status }
-      : null,
+    user: admin,
     identity: identity
       ? {
           email: identity.email,
@@ -125,9 +125,7 @@ authRouter.post("/dev-login", async (req, res) => {
   }
   try {
     const admin = await loginLocal(req, email, req.body?.name);
-    res.json({
-      user: { id: admin.id, email: admin.email, name: admin.name, status: admin.status },
-    });
+    res.json({ user: admin });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   }
@@ -176,24 +174,50 @@ authRouter.post("/logout", (req, res) => {
   });
 });
 
-authRouter.get("/admins", requireApproved, async (_req, res) => {
+authRouter.get("/admins", requireFullAdmin, async (_req, res) => {
   const admins = await prisma.admin.findMany({
     orderBy: { createdAt: "asc" },
-    select: { id: true, email: true, name: true, status: true },
   });
-  res.json({ admins, seedEmails: seedAdminEmails() });
+  res.json({ admins: admins.map((admin) => publicAdmin(admin)), seedEmails: seedAdminEmails() });
 });
 
-authRouter.patch("/admins/:id", requireApproved, async (req, res) => {
-  const status = String(req.body?.status ?? "");
-  if (!["approved", "rejected", "pending"].includes(status)) {
-    res.status(400).json({ error: "Invalid status" });
+authRouter.patch("/admins/:id", requireFullAdmin, async (req, res) => {
+  const data: { status?: string; role?: AdminRole; pages?: string } = {};
+
+  if (req.body?.status !== undefined) {
+    const status = String(req.body.status);
+    if (!["approved", "rejected", "pending"].includes(status)) {
+      res.status(400).json({ error: "Invalid status" });
+      return;
+    }
+    data.status = status;
+  }
+
+  if (req.body?.role !== undefined) {
+    const role = String(req.body.role);
+    if (role !== "admin" && role !== "student_leader") {
+      res.status(400).json({ error: "Invalid role" });
+      return;
+    }
+    data.role = normalizeRole(role);
+  }
+
+  if (req.body?.pages !== undefined) {
+    if (!Array.isArray(req.body.pages) || req.body.pages.some((page: unknown) => typeof page !== "string" || !isStaffPage(page))) {
+      res.status(400).json({ error: "Invalid pages" });
+      return;
+    }
+    data.pages = JSON.stringify(parsePages(req.body.pages));
+  }
+
+  if (!data.status && !data.role && data.pages === undefined) {
+    res.status(400).json({ error: "Nothing to update" });
     return;
   }
+
   const admin = await prisma.admin.update({
     where: { id: req.params.id },
-    data: { status },
-    select: { id: true, email: true, name: true, status: true },
+    data,
   });
-  res.json({ admin });
+  res.json({ admin: publicAdmin(admin) });
 });

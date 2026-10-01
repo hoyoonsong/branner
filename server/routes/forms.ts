@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { requireApproved } from "../auth.js";
+import { requirePage } from "../auth.js";
 import { connectedForm } from "../connected-forms.js";
 import { loadFormResponses, SheetsNotConnected } from "../sheets.js";
 
 export const formsRouter = Router();
 
-formsRouter.use(requireApproved);
+formsRouter.use(requirePage("contracts"));
 
 formsRouter.get("/:id", async (req, res) => {
   const form = connectedForm(req.params.id);
