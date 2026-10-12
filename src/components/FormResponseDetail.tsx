@@ -1,4 +1,5 @@
 import type { FormResponse } from "../lib/connectedForm";
+import { contractFlags, type ContractFlag } from "../lib/roommateContract";
 import { fullName } from "../lib/utils";
 
 export function FormResponseDetail({
@@ -12,6 +13,9 @@ export function FormResponseDetail({
     (resident) => resident.email.toLowerCase() === response.submitter.toLowerCase(),
   );
   const who = submitter ? fullName(submitter) : response.submitter;
+  const flags = contractFlags(response);
+  const shown = new Set(response.sections.flatMap((section) => section.fields.map((field) => field.label)));
+  const missingFlags = flags.filter((item) => !shown.has(item.label));
 
   return (
     <div className="overflow-hidden rounded-xl bg-stone-sand">
@@ -30,6 +34,19 @@ export function FormResponseDetail({
         )}
       </div>
       <div className="space-y-2 px-2 pb-2">
+        {missingFlags.length > 0 && (
+          <section className="overflow-hidden rounded-lg bg-white shadow-sm">
+            <h3 className="flex items-center gap-2.5 border-b border-black/5 px-4 py-2.5 font-display text-lg leading-none">
+              <span className="h-4 w-1 rounded-full bg-amber-500" aria-hidden />
+              Flagged
+            </h3>
+            <dl>
+              {missingFlags.map((item) => (
+                <FlaggedField key={`${item.kind}-${item.label}`} flag={item} />
+              ))}
+            </dl>
+          </section>
+        )}
         {response.sections.map((section) => (
           <section key={section.title} className="overflow-hidden rounded-lg bg-white shadow-sm">
             <h3 className="flex items-center gap-2.5 border-b border-black/5 px-4 py-2.5 font-display text-lg leading-none">
@@ -37,17 +54,23 @@ export function FormResponseDetail({
               {section.title}
             </h3>
             <dl>
-              {section.fields.map((field) => (
-                <div
-                  key={field.label}
-                  className="grid gap-1 border-t border-black/[0.04] px-4 py-3 first:border-t-0 sm:grid-cols-[minmax(0,13.5rem)_minmax(0,1fr)] sm:items-baseline sm:gap-6"
-                >
-                  <dt className="text-sm font-medium leading-6 text-stone-mute">{field.label}</dt>
-                  <dd className="min-w-0 text-[15px] leading-6 text-stone-ink">
-                    <Answer value={field.value} />
-                  </dd>
-                </div>
-              ))}
+              {section.fields.map((field) => {
+                const item = flags.find((entry) => entry.label === field.label);
+                if (item) {
+                  return <FlaggedField key={field.label} flag={item} />;
+                }
+                return (
+                  <div
+                    key={field.label}
+                    className="grid gap-1 border-t border-black/[0.04] px-4 py-3 first:border-t-0 sm:grid-cols-[minmax(0,13.5rem)_minmax(0,1fr)] sm:items-baseline sm:gap-6"
+                  >
+                    <dt className="text-sm font-medium leading-6 text-stone-mute">{field.label}</dt>
+                    <dd className="min-w-0 text-[15px] leading-6 text-stone-ink">
+                      <Answer value={field.value} />
+                    </dd>
+                  </div>
+                );
+              })}
             </dl>
           </section>
         ))}
@@ -98,6 +121,22 @@ export function SheetsConnection({
   );
   if (plain) return <div className="mt-3">{body}</div>;
   return <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">{body}</div>;
+}
+
+function FlaggedField({ flag }: { flag: ContractFlag }) {
+  return (
+    <div className="grid gap-1 border-t border-amber-200/80 bg-amber-100 px-4 py-3 first:border-t-0 sm:grid-cols-[minmax(0,13.5rem)_minmax(0,1fr)] sm:items-baseline sm:gap-6">
+      <dt className="text-sm font-medium leading-6 text-amber-950">
+        <span className="mb-1 inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide">
+          {flag.kind === "ra" ? "Wants an RA" : "Single"}
+        </span>
+        <span className="block">{flag.prompt}</span>
+      </dt>
+      <dd className="min-w-0 text-[15px] leading-6 text-stone-ink">
+        <Answer value={flag.value} />
+      </dd>
+    </div>
+  );
 }
 
 function Answer({ value }: { value: string }) {

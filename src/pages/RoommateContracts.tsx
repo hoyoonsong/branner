@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { FormResponseDetail, SheetsConnection } from "../components/FormResponseDetail";
 import { api } from "../lib/api";
 import { useConnectedForm, type FormResponse } from "../lib/connectedForm";
+import { contractFlags } from "../lib/roommateContract";
 import { isRa, type Resident } from "../lib/types";
 import { clsx, downloadTextFile, fullName, personSearchHay, toCsv } from "../lib/utils";
 import { Avatar } from "./Residents";
@@ -10,7 +11,7 @@ import { Avatar } from "./Residents";
 const FORM_ID = "roommate-agreement";
 const HALLS = ["Savannah Bananas", "Banana Treats", "Banana Cartoons", "Banana Republic"];
 
-type Filter = "all" | "missing" | "submitted";
+type Filter = "all" | "missing" | "submitted" | "ra" | "single";
 
 type RoomGroup = {
   room: string;
@@ -44,6 +45,10 @@ export function RoommateContracts() {
   const rooms = useMemo(() => groupRooms(residents, byRoom), [residents, byRoom]);
   const submittedCount = rooms.filter((room) => room.submitted).length;
   const missingCount = rooms.length - submittedCount;
+  const raCount = rooms.filter((room) => room.response && contractFlags(room.response).some((flag) => flag.kind === "ra")).length;
+  const singleCount = rooms.filter(
+    (room) => room.response && contractFlags(room.response).some((flag) => flag.kind === "single"),
+  ).length;
   const coveredPeople = rooms.filter((room) => room.submitted).reduce((sum, room) => sum + room.residents.length, 0);
   const expectedPeople = rooms.reduce((sum, room) => sum + room.residents.length, 0);
 
@@ -53,6 +58,9 @@ export function RoommateContracts() {
       if (hall && room.hall !== hall) return false;
       if (filter === "missing" && room.submitted) return false;
       if (filter === "submitted" && !room.submitted) return false;
+      if (filter === "ra" && !(room.response && contractFlags(room.response).some((flag) => flag.kind === "ra"))) return false;
+      if (filter === "single" && !(room.response && contractFlags(room.response).some((flag) => flag.kind === "single")))
+        return false;
       if (!query) return true;
       const hay = personSearchHay([
         room.room,
@@ -73,7 +81,15 @@ export function RoommateContracts() {
   const missing = visible.filter((room) => !room.submitted);
   const submitted = visible.filter((room) => room.submitted);
   const exportLabel =
-    filter === "missing" ? "Export not submitted" : filter === "submitted" ? "Export submitted" : "Export all";
+    filter === "missing"
+      ? "Export not submitted"
+      : filter === "submitted"
+        ? "Export submitted"
+        : filter === "ra"
+          ? "Export wants an RA"
+          : filter === "single"
+            ? "Export single"
+            : "Export all";
 
   return (
     <div>
@@ -116,10 +132,12 @@ export function RoommateContracts() {
 
       {ready && (
         <>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <Stat label="Rooms submitted" value={`${submittedCount} of ${rooms.length}`} />
             <Stat label="Rooms missing" value={String(missingCount)} />
             <Stat label="Residents covered" value={`${coveredPeople} of ${expectedPeople}`} />
+            <Stat label="Wants an RA" value={String(raCount)} />
+            <Stat label="Single" value={String(singleCount)} />
           </div>
 
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -145,6 +163,8 @@ export function RoommateContracts() {
                   ["all", "All"],
                   ["missing", "Not submitted"],
                   ["submitted", "Submitted"],
+                  ["ra", "Wants an RA"],
+                  ["single", "Single"],
                 ] as const
               ).map(([id, label]) => (
                 <button
@@ -171,7 +191,7 @@ export function RoommateContracts() {
             </button>
           </div>
 
-          {filter !== "submitted" && (
+          {filter !== "submitted" && filter !== "ra" && filter !== "single" && (
             <RoomSection title="Not submitted" rooms={missing} empty="Every shared room in this view has submitted." />
           )}
           {filter !== "missing" && (
@@ -198,7 +218,16 @@ function exportContracts(rooms: RoomGroup[], filter: Filter) {
       ...extra.map((header) => room.response?.values[header] ?? ""),
     ]),
   );
-  const slug = filter === "missing" ? "not-submitted" : filter === "submitted" ? "submitted" : "all";
+  const slug =
+    filter === "missing"
+      ? "not-submitted"
+      : filter === "submitted"
+        ? "submitted"
+        : filter === "ra"
+          ? "wants-an-ra"
+          : filter === "single"
+            ? "single"
+            : "all";
   const stamp = new Date().toISOString().slice(0, 10);
   downloadTextFile(`roommate-contracts-${slug}-${stamp}.csv`, toCsv(headers, rows));
 }
@@ -263,6 +292,10 @@ function HallRooms({ hall, rooms }: { hall: string; rooms: RoomGroup[] }) {
 }
 
 function RoomCard({ room }: { room: RoomGroup }) {
+  const flags = room.response ? contractFlags(room.response) : [];
+  const wantsRa = flags.some((flag) => flag.kind === "ra");
+  const single = flags.some((flag) => flag.kind === "single");
+
   return (
     <article className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -273,14 +306,22 @@ function RoomCard({ room }: { room: RoomGroup }) {
             {room.response?.subtitle ? ` · ${room.response.subtitle}` : ""}
           </p>
         </div>
-        <span
-          className={clsx(
-            "shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold",
-            room.submitted ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900",
+        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+          {wantsRa && (
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">Wants an RA</span>
           )}
-        >
-          {room.submitted ? "Submitted" : "Not submitted"}
-        </span>
+          {single && (
+            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">Single</span>
+          )}
+          <span
+            className={clsx(
+              "rounded-full px-2.5 py-1 text-xs font-semibold",
+              room.submitted ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900",
+            )}
+          >
+            {room.submitted ? "Submitted" : "Not submitted"}
+          </span>
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {room.residents.map((resident) => (
@@ -294,6 +335,16 @@ function RoomCard({ room }: { room: RoomGroup }) {
           </Link>
         ))}
       </div>
+      {flags.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {flags.map((flag) => (
+            <p key={`${flag.kind}-${flag.label}`} className="whitespace-pre-wrap rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              <span className="font-semibold">{flag.kind === "ra" ? "Wants an RA" : "Single"}</span>
+              <span className="text-stone-ink"> · {flag.value}</span>
+            </p>
+          ))}
+        </div>
+      )}
       {room.response && (
         <details className="mt-4">
           <summary className="cursor-pointer text-sm font-medium text-cardinal">View agreement</summary>
