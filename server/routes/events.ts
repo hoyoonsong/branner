@@ -9,14 +9,24 @@ import { applyAttendanceStatus, attendanceStatus, parseResponseData } from "../a
 export const eventsRouter = Router();
 eventsRouter.use(requirePage("attendance"));
 
+const honorStatement = [
+  "In accordance with the Stanford Honor Code, I attest that I was here.",
+  "If I wasn't here or I'm knowingly sending this to someone that wasn't here, I am fully acknowledging that I may get my bed taken away",
+];
+
 const defaultFormSchema = JSON.stringify({
   fields: [
     {
-      id: "notes",
-      type: "textarea",
-      label: "Anything we should know?",
+      id: "honor",
+      type: "heading",
+      label: honorStatement.join(" "),
+      richText: `<div>${honorStatement[0]}</div><div><br></div><div>${honorStatement[1]}</div>`,
+    },
+    {
+      id: "agree",
+      type: "checkbox",
+      label: "I agree",
       required: false,
-      placeholder: "Optional",
     },
   ],
 });

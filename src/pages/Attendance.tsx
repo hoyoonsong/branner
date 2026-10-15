@@ -8,14 +8,24 @@ import { BRANNER_LAT, BRANNER_LNG } from "../lib/geo";
 import { FormBuilderModal } from "../components/FormBuilderModal";
 import { EventLocationMap } from "../components/EventLocationMap";
 
+const honorStatement = [
+  "In accordance with the Stanford Honor Code, I attest that I was here.",
+  "If I wasn't here or I'm knowingly sending this to someone that wasn't here, I am fully acknowledging that I may get my bed taken away",
+];
+
 const defaultSchema: FormSchema = {
   fields: [
     {
-      id: "notes",
-      type: "textarea",
-      label: "Anything we should know?",
+      id: "honor",
+      type: "heading",
+      label: honorStatement.join(" "),
+      richText: `<div>${honorStatement[0]}</div><div><br></div><div>${honorStatement[1]}</div>`,
+    },
+    {
+      id: "agree",
+      type: "checkbox",
+      label: "I agree",
       required: false,
-      placeholder: "Optional",
     },
   ],
 };

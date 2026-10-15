@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { QRCodeSVG } from "qrcode.react";
+import { QRCodeCanvas, QRCodeSVG } from "qrcode.react";
 import { api } from "../lib/api";
 import { eventIsHouseMeeting, isHouseMeeting, isRa, type AttendanceEvent, type EventType, type FormField, type FormSchema, type Resident } from "../lib/types";
 import { flattenVisibleFields } from "../lib/conditional";
@@ -45,6 +45,7 @@ export function EventDetail() {
   const [list, setList] = useState<PeopleFilter>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [peopleError, setPeopleError] = useState("");
+  const [qrOpen, setQrOpen] = useState(false);
   const savingRef = useRef(false);
   const revision = useRef(0);
 
@@ -334,12 +335,22 @@ export function EventDetail() {
           <Stat label="Expected" value={rollup.expected} />
         </div>
         <div className="rounded-2xl bg-white p-4 text-center shadow-sm">
-          {shareUrl && <QRCodeSVG value={shareUrl} size={140} className="mx-auto" />}
+          {shareUrl && (
+            <button
+              type="button"
+              onClick={() => setQrOpen(true)}
+              className="mx-auto block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-cardinal"
+              aria-label="View QR code full screen"
+            >
+              <QRCodeSVG value={shareUrl} size={140} />
+            </button>
+          )}
           <a href={shareUrl} className="mt-2 block break-all text-xs text-cardinal">
             {shareUrl}
           </a>
         </div>
       </div>
+      {qrOpen && shareUrl && <QrFullscreen url={shareUrl} onClose={() => setQrOpen(false)} />}
 
       {event.locationTracking && (
         <section className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
@@ -1470,6 +1481,75 @@ function responseWindowCopy(event: AttendanceEvent): string {
   if (gate.reason === "not_yet" && open) return `Check-in opens ${open}.`;
   if (gate.reason === "ended" && close) return `Check-in closed ${close}.`;
   return range ? `People can submit ${range}.` : "People can check in and submit the form.";
+}
+
+function pngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Could not make an image"))), "image/png");
+  });
+}
+
+async function copyCanvasPng(canvas: HTMLCanvasElement | null) {
+  if (!canvas) throw new Error("QR is not ready");
+  window.focus();
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob(canvas) })]);
+}
+
+function QrFullscreen({ url, onClose }: { url: string; onClose: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+
+  const copy = async () => {
+    try {
+      await copyCanvasPng(canvasRef.current);
+      setCopied("copied");
+    } catch {
+      setCopied("failed");
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        void copy();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#f7f4ef] p-6">
+      <QRCodeSVG
+        value={url}
+        size={1024}
+        className="h-auto max-h-[calc(100dvh-8rem)] w-auto max-w-[calc(100vw-3rem)] bg-white"
+      />
+      <QRCodeCanvas ref={canvasRef} value={url} size={1024} className="hidden" aria-hidden />
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="rounded-lg bg-cardinal px-4 py-2 text-sm font-semibold text-white"
+        >
+          {copied === "copied" ? "Copied" : copied === "failed" ? "Couldn’t copy" : "Copy image"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg border border-black/10 bg-white px-4 py-2 text-sm"
+        >
+          Close
+        </button>
+      </div>
+      <p className="mt-3 max-w-md break-all text-center text-xs text-stone-mute">{url}</p>
+    </div>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
