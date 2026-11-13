@@ -1,24 +1,7 @@
-import { SURVEY_BIRTHDAYS } from "../data/birthdays";
-import { personSearchHay } from "./utils";
+import type { ParsedBirthday } from "../../server/birthday-match";
 
-export type ParsedBirthday = { year: number; month: number; day: number };
-
-export function parseBirthday(raw: string | null | undefined): ParsedBirthday | null {
-  const text = String(raw ?? "").trim();
-  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (iso) {
-    return { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) };
-  }
-  const us = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (us) {
-    return { year: Number(us[3]), month: Number(us[1]), day: Number(us[2]) };
-  }
-  return null;
-}
-
-export function birthdayIso(value: ParsedBirthday): string {
-  return `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
-}
+export { birthdayFor, parseBirthday } from "../../server/birthday-match";
+export type { ParsedBirthday } from "../../server/birthday-match";
 
 export function monthDayKey(value: ParsedBirthday): number {
   return value.month * 100 + value.day;
@@ -96,35 +79,4 @@ export function midnightCountdown(now: Date): { clock: string; done: boolean } {
   const seconds = totalSeconds % 60;
   const clock = `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   return { clock, done: false };
-}
-
-export function birthdayFor(resident: {
-  email?: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
-  legalName?: string | null;
-  birthday?: string | null;
-}): string | null {
-  const stored = parseBirthday(resident.birthday);
-  if (stored) return birthdayIso(stored);
-
-  const emails = new Set(
-    [resident.email]
-      .map((value) => String(value ?? "").trim().toLowerCase())
-      .filter((value) => value.includes("@")),
-  );
-  const byEmail = SURVEY_BIRTHDAYS.find((row) => row.emails.some((email) => emails.has(email)));
-  if (byEmail) return byEmail.birthday;
-
-  const first = personSearchHay([resident.firstName]);
-  const last = personSearchHay([resident.lastName]);
-  if (!first || !last) return null;
-  const nameHits = SURVEY_BIRTHDAYS.filter((row) => {
-    const tokens = personSearchHay([row.fullName]).split(" ").filter(Boolean);
-    const surveyLast = tokens[tokens.length - 1] ?? "";
-    const surveyFirst = personSearchHay([row.preferredName || tokens[0] || ""]);
-    const legalFirst = personSearchHay([tokens[0] || ""]);
-    return surveyLast === last && (surveyFirst === first || legalFirst === first);
-  });
-  return nameHits.length === 1 ? nameHits[0].birthday : null;
 }

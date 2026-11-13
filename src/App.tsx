@@ -12,6 +12,7 @@ import { RoommateContracts } from "./pages/RoommateContracts";
 import { Birthdays } from "./pages/Birthdays";
 import { MapPage } from "./pages/MapPage";
 import { Admins } from "./pages/Admins";
+import { Settings } from "./pages/Settings";
 import { PublicAttendance } from "./pages/PublicAttendance";
 
 export default function App() {
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/map" element={<MapPage />} />
           </Route>
           <Route element={<AdminsRoute />}>
+            <Route path="/settings" element={<Settings />} />
             <Route path="/admins" element={<Admins />} />
           </Route>
         </Route>

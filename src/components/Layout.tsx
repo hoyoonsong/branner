@@ -11,7 +11,12 @@ export function Layout() {
       to: page.to,
       label: page.label,
     })),
-    ...(isFullAdmin(user) ? [{ to: "/admins", label: "Admins" }] : []),
+    ...(isFullAdmin(user)
+      ? [
+          { to: "/settings", label: "Settings" },
+          { to: "/admins", label: "Admins" },
+        ]
+      : []),
   ];
   const home = firstStaffPath(user) ?? "/";
   const location = useLocation();

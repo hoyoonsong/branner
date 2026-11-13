@@ -97,3 +97,24 @@ model Submission {
 
   @@unique([eventId, residentId])
 }
+
+model BirthdayReminderRecipient {
+  email     String   @id
+  createdAt DateTime @default(now())
+}
+
+model BirthdayReminderSend {
+  id         String   @id @default(cuid())
+  email      String
+  occurrence String
+  sentAt     DateTime @default(now())
+
+  @@unique([email, occurrence])
+}
+
+model BirthdayReminderStatus {
+  id         String    @id @default("status")
+  lastError  String    @default("")
+  lastSentAt DateTime?
+  updatedAt  DateTime  @updatedAt
+}

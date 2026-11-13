@@ -11,6 +11,8 @@ import { publicRouter } from "./routes/public.js";
 import { geoRouter } from "./routes/geo.js";
 import { formsRouter } from "./routes/forms.js";
 import { importRouter } from "./routes/import.js";
+import { settingsRouter } from "./routes/settings.js";
+import { startBirthdayReminders } from "./birthday-reminders.js";
 import { ensureSeed } from "./ensure-seed.js";
 import { googleCallbackUrl, publicOrigin, uploadsDir } from "./runtime.js";
 
@@ -60,6 +62,7 @@ app.use("/api/events", eventsRouter);
 app.use("/api/public", publicRouter);
 app.use("/api/geo", geoRouter);
 app.use("/api/forms", formsRouter);
+app.use("/api/settings", settingsRouter);
 
 const uploads = uploadsDir();
 app.use("/uploads", express.static(uploads));
@@ -86,6 +89,7 @@ async function main() {
       `Google OAuth: ${process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? "enabled" : "not configured"}`,
     );
     console.log(`Google callback: ${googleCallbackUrl()}`);
+    startBirthdayReminders();
   });
 }
 
