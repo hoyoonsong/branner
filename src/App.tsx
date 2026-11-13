@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Protected } from "./components/Protected";
 import { AdminsRoute, HomeRedirect, StaffRoute } from "./components/StaffRoute";
@@ -12,7 +12,6 @@ import { RoommateContracts } from "./pages/RoommateContracts";
 import { Birthdays } from "./pages/Birthdays";
 import { MapPage } from "./pages/MapPage";
 import { Admins } from "./pages/Admins";
-import { Settings } from "./pages/Settings";
 import { PublicAttendance } from "./pages/PublicAttendance";
 
 export default function App() {
@@ -42,7 +41,7 @@ export default function App() {
             <Route path="/map" element={<MapPage />} />
           </Route>
           <Route element={<AdminsRoute />}>
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/settings" element={<Navigate to="/admins" replace />} />
             <Route path="/admins" element={<Admins />} />
           </Route>
         </Route>

@@ -18,8 +18,6 @@ const TICK_MS = 60_000;
 export type ReminderPerson = {
   email: string;
   name: string;
-  detail: string;
-  kind: "resident" | "admin";
 };
 
 export function mailConfig() {
@@ -29,28 +27,17 @@ export function mailConfig() {
 }
 
 export async function listReminderPeople(): Promise<ReminderPerson[]> {
-  const [residents, admins] = await Promise.all([
-    prisma.resident.findMany({ orderBy: [{ lastName: "asc" }, { firstName: "asc" }] }),
-    prisma.admin.findMany({ where: { status: "approved" }, orderBy: { name: "asc" } }),
-  ]);
+  const admins = await prisma.admin.findMany({
+    where: { status: "approved" },
+    orderBy: { name: "asc" },
+  });
   const seen = new Set<string>();
   const people: ReminderPerson[] = [];
-  for (const resident of residents) {
-    const email = resident.email.trim().toLowerCase();
-    if (!email.includes("@") || seen.has(email)) continue;
-    seen.add(email);
-    people.push({
-      email,
-      name: `${resident.firstName} ${resident.lastName}`.trim(),
-      detail: [resident.room, resident.hall].filter(Boolean).join(" · "),
-      kind: "resident",
-    });
-  }
   for (const admin of admins) {
     const email = admin.email.trim().toLowerCase();
     if (!email.includes("@") || seen.has(email)) continue;
     seen.add(email);
-    people.push({ email, name: admin.name, detail: "Admin", kind: "admin" });
+    people.push({ email, name: admin.name });
   }
   return people;
 }
@@ -109,7 +96,7 @@ export async function replaceReminderRecipients(emails: string[]) {
   const next = [...new Set(emails.map((email) => email.trim().toLowerCase()))];
   const unknown = next.filter((email) => !allowed.has(email));
   if (unknown.length) {
-    throw new Error("Those addresses are not on the roster");
+    throw new Error("Only approved admins can get these emails");
   }
   await prisma.$transaction(async (tx) => {
     await tx.birthdayReminderRecipient.deleteMany();
@@ -236,8 +223,8 @@ export async function sendTestReminder(to: string) {
       };
   const prefixed = {
     subject: `Test: ${message.subject}`,
-    text: `This is a test. The real email goes to the people checked in Settings.\n\n${message.text}`,
-    html: `<p>This is a test. The real email goes to the people checked in Settings.</p>${message.html}`,
+    text: `This is a test. The real email goes to the admins checked on the Admins page.\n\n${message.text}`,
+    html: `<p>This is a test. The real email goes to the admins checked on the Admins page.</p>${message.html}`,
   };
   await sendEmail(to, prefixed, `birthday-test-${Date.now()}`);
 }
